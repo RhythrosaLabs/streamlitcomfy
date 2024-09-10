@@ -5,6 +5,11 @@ from PIL import Image
 import io
 import networkx as nx
 from streamlit_agraph import agraph, Node, Edge, Config
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 class AINode:
     def __init__(self, id, name, model_id, input_type, output_type):
@@ -14,16 +19,26 @@ class AINode:
         self.input_type = input_type
         self.output_type = output_type
 
-def download_image(url):
-    response = requests.get(url)
-    response.raise_for_status()
-    return Image.open(io.BytesIO(response.content))
+def verify_api_key(api_key):
+    try:
+        client = replicate.Client(api_token=api_key)
+        # Try to list models (this should work with any valid API key)
+        client.models.list()
+        return True
+    except replicate.exceptions.ReplicateError as e:
+        logger.error(f"API key verification failed: {str(e)}")
+        return False
 
 def process_replicate(node, input_data, **kwargs):
     try:
         if not st.session_state.api_key:
+            logger.error("API key is missing")
             st.error("API key is missing. Please enter your Replicate API key in the sidebar.")
             return None
+
+        logger.info(f"Processing node: {node.name}")
+        logger.info(f"Input type: {type(input_data)}")
+        logger.info(f"Additional kwargs: {kwargs}")
 
         if node.input_type == "text":
             model_input = {"prompt": input_data}
@@ -32,13 +47,7 @@ def process_replicate(node, input_data, **kwargs):
                 img_byte_arr = io.BytesIO()
                 input_data.save(img_byte_arr, format='PNG')
                 img_byte_arr = img_byte_arr.getvalue()
-                
-                temp_file = st.file_uploader("Temporary file (don't change this)", type=["png"], key="temp_file")
-                if temp_file is None:
-                    st.session_state.temp_file = img_byte_arr
-                    st.experimental_rerun()
-                
-                model_input = {"image": temp_file}
+                model_input = {"image": img_byte_arr}
             elif isinstance(input_data, str) and input_data.startswith("http"):
                 model_input = {"image": input_data}
             else:
@@ -48,8 +57,13 @@ def process_replicate(node, input_data, **kwargs):
         
         model_input.update(kwargs)
         
+        logger.info(f"Model input: {model_input}")
+        
         # Use replicate.run with the model_id, input, and API key
-        output = replicate.run(node.model_id, input=model_input, api_token=st.session_state.api_key)
+        client = replicate.Client(api_token=st.session_state.api_key)
+        output = client.run(node.model_id, input=model_input)
+        
+        logger.info(f"Raw output: {output}")
         
         if isinstance(output, list) and len(output) > 0:
             return output[0] if isinstance(output[0], str) and output[0].startswith("http") else output[0]
@@ -58,10 +72,12 @@ def process_replicate(node, input_data, **kwargs):
         else:
             return output
     except replicate.exceptions.ReplicateError as e:
+        logger.error(f"Replicate API Error: {str(e)}")
         st.error(f"Replicate API Error: {str(e)}")
         st.error("Please check your API key and model settings.")
         return None
     except Exception as e:
+        logger.error(f"An unexpected error occurred: {str(e)}")
         st.error(f"An unexpected error occurred: {str(e)}")
         return None
 
@@ -71,13 +87,17 @@ def main():
     st.title("Replicate AI Pipeline Builder")
     st.sidebar.header("Settings")
 
-    # API key input
+    # API key input and verification
     if 'api_key' not in st.session_state:
         st.session_state.api_key = ""
     
     api_key = st.sidebar.text_input("Replicate API Key", type="password", value=st.session_state.api_key)
     if api_key:
         st.session_state.api_key = api_key
+        if verify_api_key(api_key):
+            st.sidebar.success("API key verified successfully!")
+        else:
+            st.sidebar.error("Invalid API key. Please check and try again.")
 
     # Available AI nodes
     available_nodes = [
