@@ -2,11 +2,3 @@ streamlit
 replicate
 requests
 Pillow
-graphviz
-python-dotenv
-fastapi
-uvicorn
-pydantic
-python-multipart
-networkx
-streamlit-agraph
