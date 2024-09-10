@@ -2,3 +2,4 @@ streamlit
 replicate
 requests
 Pillow
+networkx
