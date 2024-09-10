@@ -14,11 +14,26 @@ if "api_key" not in st.session_state:
 # Input for the API Key
 api_key_input = st.text_input("Enter your Replicate API Key", type="password")
 
-# Button to save API key
-if st.button("Save API Key"):
+# Button to save and validate API key
+if st.button("Save and Validate API Key"):
     if api_key_input:
-        st.session_state["api_key"] = api_key_input
-        st.success("API Key saved successfully!")
+        api_key_input = api_key_input.strip()  # Ensure no extra spaces
+        try:
+            # Run a basic test with the entered API key to validate it
+            client = replicate.Client(api_token=api_key_input)
+            st.write("Validating API Key...")
+
+            # Test the key with a quick model run (e.g., Stable Diffusion)
+            output = replicate.run(
+                "stability-ai/stable-diffusion:latest",
+                input={"prompt": "A sunset over the mountains, impressionism"}
+            )
+
+            # If we reach this point, the key is valid
+            st.session_state["api_key"] = api_key_input
+            st.success("API Key is valid and saved!")
+        except Exception as e:
+            st.error(f"API Key validation failed: {e}")
     else:
         st.warning("Please enter a valid API key.")
 
@@ -30,15 +45,15 @@ if st.session_state["api_key"]:
     # List of available models and their parameters
     available_models = {
         "LLaMA 70b (Text Generation)": {
-            "id": "replicate/llama-70b",  # Double check this model name
+            "id": "replicate/llama-70b",
             "params": ["prompt", "max_length", "temperature"]
         },
         "Flux Pro (Art Generation)": {
-            "id": "black-forest-labs/flux-pro",  # Double check this model name
+            "id": "black-forest-labs/flux-pro",
             "params": ["prompt", "style", "guidance_scale"]
         },
         "Image Upscaler": {
-            "id": "stability-ai/stable-diffusion-x4-upscaler",  # Confirm this slug exists
+            "id": "stability-ai/stable-diffusion-x4-upscaler",
             "params": ["image", "upscale_factor"]
         }
     }
@@ -103,24 +118,12 @@ if st.session_state["api_key"]:
                 output = replicate.run(
                     f"{model_id}:latest",
                     input=st.session_state["nodes"][i]["params"],
-                    api_token=st.session_state["api_key"]  # Explicitly passing the API key
+                    api_token=st.session_state["api_key"]
                 )
                 st.session_state["nodes"][i]["output"] = output
                 st.session_state["outputs"][f"Node_{i+1}_output"] = output
                 st.write(f"Output for Node {i + 1}: {output}")
             except Exception as e:
                 st.error(f"Error in Node {i + 1}: {e}")
-
-    # Chain outputs
-    st.write("### Chain Outputs Between Nodes")
-    for i in range(len(st.session_state["nodes"]) - 1):
-        if f"Node_{i+1}_output" in st.session_state["outputs"]:
-            st.write(f"Passing output from Node {i + 1} to Node {i + 2}")
-            next_node = st.session_state["nodes"][i + 1]
-            if isinstance(st.session_state["outputs"][f"Node_{i+1}_output"], str):  # For text models
-                next_node["params"]["prompt"] = st.session_state["outputs"][f"Node_{i+1}_output"]
-            elif isinstance(st.session_state["outputs"][f"Node_{i+1}_output"], bytes):  # For image models
-                next_node["params"]["image"] = st.session_state["outputs"][f"Node_{i+1}_output"]
-
 else:
-    st.warning("Please enter your Replicate API key and click 'Save API Key' to proceed.")
+    st.warning("Please enter your Replicate API key and click 'Save and Validate API Key' to proceed.")
