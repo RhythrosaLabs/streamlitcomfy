@@ -14,9 +14,13 @@ if "api_key" not in st.session_state:
 # Input for the API Key
 api_key_input = st.text_input("Enter your Replicate API Key", type="password")
 
-# Save the API key to session state when entered
-if api_key_input:
-    st.session_state["api_key"] = api_key_input
+# Button to save API key
+if st.button("Save API Key"):
+    if api_key_input:
+        st.session_state["api_key"] = api_key_input
+        st.success("API Key saved successfully!")
+    else:
+        st.warning("Please enter a valid API key.")
 
 # Check if the API key is set in session state
 if st.session_state["api_key"]:
@@ -119,4 +123,4 @@ if st.session_state["api_key"]:
                 next_node["params"]["image"] = st.session_state["outputs"][f"Node_{i+1}_output"]
 
 else:
-    st.warning("Please enter your Replicate API key to proceed.")
+    st.warning("Please enter your Replicate API key and click 'Save API Key' to proceed.")
