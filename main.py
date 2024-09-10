@@ -30,16 +30,23 @@ def process_replicate(node, input_data, api_key, **kwargs):
             model_input = {"prompt": input_data}
         elif node.input_type == "image":
             if isinstance(input_data, Image.Image):
-                # Convert PIL Image to bytes
-                img_byte_arr = io.BytesIO()
-                input_data.save(img_byte_arr, format='PNG')
-                model_input = {"image": img_byte_arr.getvalue()}
+                # Convert PIL Image to base64
+                buffered = io.BytesIO()
+                input_data.save(buffered, format="PNG")
+                img_str = base64.b64encode(buffered.getvalue()).decode()
+                model_input = {"image": img_str}
             elif isinstance(input_data, str) and input_data.startswith("http"):
-                # If input_data is a URL, download the image
-                input_data = download_image(input_data)
-                img_byte_arr = io.BytesIO()
-                input_data.save(img_byte_arr, format='PNG')
-                model_input = {"image": img_byte_arr.getvalue()}
+                # If input_data is a URL, download the image and convert to base64
+                response = requests.get(input_data)
+                img = Image.open(io.BytesIO(response.content))
+                buffered = io.BytesIO()
+                img.save(buffered, format="PNG")
+                img_str = base64.b64encode(buffered.getvalue()).decode()
+                model_input = {"image": img_str}
+            elif isinstance(input_data, bytes):
+                # If input_data is already bytes, encode it to base64
+                img_str = base64.b64encode(input_data).decode()
+                model_input = {"image": img_str}
             else:
                 model_input = {"image": input_data}
         else:
