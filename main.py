@@ -17,24 +17,6 @@ class AINode:
             client = replicate.Client(api_token=api_key)
             output = client.run(self.model_id, input={"image": input_data, **kwargs})
             return output
-        elif self.api_type == "openai":
-            headers = {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json"
-            }
-            payload = {
-                "model": self.model_id,
-                "prompt": input_data,
-                "max_tokens": kwargs.get("max_tokens", 100),
-                "temperature": kwargs.get("temperature", 0.7)
-            }
-            response = requests.post("https://api.openai.com/v1/completions", headers=headers, json=payload)
-            if response.status_code == 200:
-                data = response.json()
-                return data["choices"][0]["text"]
-            else:
-                st.error(f"Error: {response.status_code}, {response.text}")
-                return None
         # Add more API types if needed
 
 
@@ -72,7 +54,6 @@ def main():
     # API key input fields
     api_keys = {
         "replicate": st.sidebar.text_input("Replicate API Key", type="password"),
-        "openai": st.sidebar.text_input("OpenAI API Key", type="password"),
     }
 
     # Call the node-based UI renderer
