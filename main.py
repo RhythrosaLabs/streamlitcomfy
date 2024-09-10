@@ -184,8 +184,6 @@ def main():
             remove_type = st.radio("Select what to remove:", ["Node", "Connection"])
             if remove_type == "Node":
                 node_to_remove = st.selectbox("Select node to remove", list(st.session_state.workflow.nodes), format_func=lambda x: st.session_state.workflow.nodes[x]['node'].Here’s the rest of the Streamlit app code, incorporating the model parameter customization and node naming:
-
-```python
 .name)
                 if st.button("Remove Node", key="remove_node"):
                     st.session_state.workflow.remove_node(node_to_remove)
