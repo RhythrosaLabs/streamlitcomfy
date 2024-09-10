@@ -19,6 +19,24 @@ class AINode:
             client = replicate.Client(api_token=api_key)
             output = client.run(self.model_id, input={"image": input_data, **kwargs})
             return output
+        elif self.api_type == "openai":
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "model": self.model_id,
+                "prompt": input_data,
+                "max_tokens": kwargs.get("max_tokens", 100),
+                "temperature": kwargs.get("temperature", 0.7)
+            }
+            response = requests.post("https://api.openai.com/v1/completions", headers=headers, json=payload)
+            if response.status_code == 200:
+                data = response.json()
+                return data["choices"][0]["text"]
+            else:
+                st.error(f"Error: {response.status_code}, {response.text}")
+                return None
         elif self.api_type == "stability":
             headers = {
                 "Authorization": f"Bearer {api_key}",
@@ -63,6 +81,7 @@ def main():
     api_keys = {
         "replicate": st.sidebar.text_input("Replicate API Key", type="password"),
         "stability": st.sidebar.text_input("Stability AI API Key", type="password"),
+        "openai": st.sidebar.text_input("OpenAI API Key", type="password"),
         # Add more API keys as needed
     }
 
@@ -70,6 +89,8 @@ def main():
     available_nodes = [
         AINode("Stable Diffusion", "replicate", "stability-ai/stable-diffusion:db21e45d3f7023abc2a46ee38a23973f6dce16bb082a930b0c49861f96d1e5bf", "text", "image"),
         AINode("DALL-E 3", "stability", "stable-diffusion-xl-1024-v1-0", "text", "image"),
+        AINode("GPT-4 Completion", "openai", "gpt-4", "text", "text"),
+        AINode("Whisper Transcription", "openai", "whisper-1", "audio", "text"),
         AINode("Video Generation", "replicate", "anotherjesse/zeroscope-v2-xl:9f747673945c62801b13b84701c783929c0ee784e4748ec062204894dda1a351", "text", "video"),
         AINode("Image Upscaling", "replicate", "nightmareai/real-esrgan:42fed1c4974146d4d2414e2be2c5277c7fcf05fcc3a73abf41610695738c1d7b", "image", "image"),
         # Add more nodes as needed
@@ -82,13 +103,18 @@ def main():
         pipeline.add_node(node)
 
     # Input
-    input_type = pipeline.nodes[0].input_type if pipeline.nodes else "text"
-    if input_type == "text":
-        user_input = st.text_area("Enter your prompt:")
-    elif input_type == "image":
-        user_input = st.file_uploader("Upload an image:", type=["png", "jpg", "jpeg"])
-        if user_input:
-            user_input = Image.open(user_input)
+    if pipeline.nodes:
+        input_type = pipeline.nodes[0].input_type
+        if input_type == "text":
+            user_input = st.text_area("Enter your prompt:")
+        elif input_type == "image":
+            user_input = st.file_uploader("Upload an image:", type=["png", "jpg", "jpeg"])
+            if user_input:
+                user_input = Image.open(user_input)
+        elif input_type == "audio":
+            user_input = st.file_uploader("Upload an audio file:", type=["wav", "mp3"])
+            if user_input:
+                user_input = user_input.read()
 
     # Run pipeline
     if st.button("Run Pipeline"):
@@ -99,6 +125,8 @@ def main():
                     st.image(output, caption="Generated Image", use_column_width=True)
                 elif isinstance(output, str) and output.startswith("http"):
                     st.video(output)
+                elif isinstance(output, str):
+                    st.write(output)
                 else:
                     st.write(output)
         else:
