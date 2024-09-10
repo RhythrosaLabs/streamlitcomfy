@@ -16,6 +16,11 @@ class AINode:
         self.input_type = input_type
         self.output_type = output_type
 
+def download_image(url):
+    response = requests.get(url)
+    response.raise_for_status()
+    return Image.open(io.BytesIO(response.content))
+
 def process_replicate(node, input_data, api_key, **kwargs):
     try:
         client = replicate.Client(api_token=api_key)
@@ -29,6 +34,12 @@ def process_replicate(node, input_data, api_key, **kwargs):
                 img_byte_arr = io.BytesIO()
                 input_data.save(img_byte_arr, format='PNG')
                 model_input = {"image": img_byte_arr.getvalue()}
+            elif isinstance(input_data, str) and input_data.startswith("http"):
+                # If input_data is a URL, download the image
+                input_data = download_image(input_data)
+                img_byte_arr = io.BytesIO()
+                input_data.save(img_byte_arr, format='PNG')
+                model_input = {"image": img_byte_arr.getvalue()}
             else:
                 model_input = {"image": input_data}
         else:
@@ -39,7 +50,19 @@ def process_replicate(node, input_data, api_key, **kwargs):
         
         # Run the model
         output = client.run(node.model_id, input=model_input)
-        return output
+        
+        # Handle different types of output
+        if isinstance(output, list) and len(output) > 0:
+            if isinstance(output[0], str) and output[0].startswith("http"):
+                # If the output is a list with a URL, download the image
+                return download_image(output[0])
+            else:
+                return output[0]  # Return the first element of the list
+        elif isinstance(output, str) and output.startswith("http"):
+            # If the output is a URL, download the image
+            return download_image(output)
+        else:
+            return output
     except replicate.exceptions.ReplicateError as e:
         st.error(f"Replicate API Error: {str(e)}")
         st.error("Please check your API key and model settings.")
@@ -198,7 +221,7 @@ def main():
                             if isinstance(current_output, Image.Image):
                                 st.image(current_output, caption=f"Output from {node.name}", use_column_width=True)
                             elif isinstance(current_output, str) and current_output.startswith("http"):
-                                st.video(current_output)
+                                st.image(current_output, caption=f"Output from {node.name}", use_column_width=True)
                             else:
                                 st.write(current_output)
                         
