@@ -1,65 +1,76 @@
 import streamlit as st
-from streamlit_elements import elements, mui, dashboard
-from diffusers import StableDiffusionPipeline
-import torch
+from streamlit_elements import elements, mui
+import replicate
+import requests
 
-# Initialize models dictionary to store nodes' models
-models = {}
+# Initialize session state for API keys
+if 'llama_key' not in st.session_state:
+    st.session_state['llama_key'] = ''
+if 'replicate_key' not in st.session_state:
+    st.session_state['replicate_key'] = ''
 
-# Function to load models dynamically, running on CPU to avoid high memory usage
-@st.cache_resource(show_spinner=False)
-def load_model(model_choice):
-    device = "cpu"  # Using CPU for stability in low-resource environments
-    if model_choice == "SD 1.x":
-        return StableDiffusionPipeline.from_pretrained("CompVis/stable-diffusion-v1-4").to(device)
-    elif model_choice == "SD 2.x":
-        return StableDiffusionPipeline.from_pretrained("stabilityai/stable-diffusion-2-1").to(device)
-    else:
-        return StableDiffusionPipeline.from_pretrained("stabilityai/stable-diffusion-xl").to(device)
+# Function to call LLaMA 70B
+def llama_generate(prompt):
+    headers = {"Authorization": f"Bearer {st.session_state['llama_key']}"}
+    url = "https://api-inference.huggingface.co/models/meta-llama/Llama-2-70b"
+    response = requests.post(url, json={"inputs": prompt}, headers=headers)
+    return response.json()
 
-# Sidebar for task and model selection
-task = st.sidebar.selectbox("Select Task", ["Text to Image"])
-model_selection = st.sidebar.selectbox("Select Model", ["SD 1.x", "SD 2.x", "SDXL"])
+# Function to call Flux for image generation
+def flux_generate(prompt):
+    output = replicate.run(
+        "black-forest-labs/flux-schnell", 
+        input={"prompt": prompt},
+        api_token=st.session_state['replicate_key']
+    )
+    return output
 
-# Image resolution sliders (reduced default resolution)
-height = st.sidebar.slider("Image Height", 128, 512, 256)
-width = st.sidebar.slider("Image Width", 128, 512, 256)
-steps = st.sidebar.slider("Steps", 10, 50, 25)
-guidance_scale = st.sidebar.slider("CFG Scale", 1.0, 20.0, 7.5)
+# Function to call Real-ESRGAN for upscaling
+def upscale_image(image_url):
+    output = replicate.run(
+        "nightmareai/real-esrgan", 
+        input={"image": image_url, "scale": 4},
+        api_token=st.session_state['replicate_key']
+    )
+    return output
 
-# Dashboard layout settings for draggable nodes
-layout = [
-    dashboard.Item("node1", 0, 0, 3, 3),  # Node1 grid position and size
-    dashboard.Item("node2", 3, 0, 3, 3),  # Node2 grid position and size
-]
+# Sidebar for API keys
+st.sidebar.title("API Keys")
+st.sidebar.text_input("LLaMA API Key", key='llama_key', type='password')
+st.sidebar.text_input("Replicate API Key", key='replicate_key', type='password')
 
-with elements("dashboard"):
-    with dashboard.Grid(layout, draggable=True, resizable=True):
-        # Node 1 for input prompt and model selection
-        with mui.Paper(id="node1", elevation=3):
-            st.write("Node 1: Input Prompt")
-            prompt = st.text_input("Enter prompt for Node 1", "A futuristic city skyline")
-            models["node1"] = load_model(model_selection)
-        
-        # Node 2 to connect and process
-        with mui.Paper(id="node2", elevation=3):
-            st.write("Node 2: Generate Image")
-            if st.button("Generate from Node 1"):
-                if "node1" in models:
-                    pipe = models["node1"]
-                    with st.spinner("Generating image..."):
-                        image = pipe(prompt, num_inference_steps=steps, guidance_scale=guidance_scale, height=height, width=width).images[0]
-                        st.image(image, caption="Generated Image from Node 1")
+# Streamlit Elements UI
+with elements("main"):
+    with mui.Container():
+        # Text generation Node
+        with mui.Paper(elevation=3):
+            st.write("### LLaMA 70B - Text Generation")
+            prompt = st.text_input("Enter your text prompt for LLaMA", "")
+            if st.button("Generate Text"):
+                if prompt:
+                    text_output = llama_generate(prompt)
+                    st.write(f"Generated Text: {text_output}")
                 else:
-                    st.warning("Node 1 is not connected or assigned a model.")
+                    st.write("Please provide a prompt.")
 
-# Generate button for the entire pipeline
-if st.sidebar.button("Generate Entire Pipeline"):
-    if "node1" in models:
-        pipe = models["node1"]
-        st.sidebar.write("Generating image from Node 1...")
-        with st.spinner("Generating image..."):
-            image = pipe(prompt, num_inference_steps=steps, guidance_scale=guidance_scale, height=height, width=width).images[0]
-            st.sidebar.image(image, caption="Generated Image")
-    else:
-        st.sidebar.error("No model assigned to Node 1")
+        # Image generation Node
+        with mui.Paper(elevation=3):
+            st.write("### Flux - Text to Image")
+            image_prompt = st.text_input("Enter your text prompt for Flux", "")
+            if st.button("Generate Image"):
+                if image_prompt:
+                    image_output = flux_generate(image_prompt)
+                    st.image(image_output)
+                else:
+                    st.write("Please provide an image prompt.")
+
+        # Image Upscaling Node
+        with mui.Paper(elevation=3):
+            st.write("### Real-ESRGAN - Image Upscaling")
+            image_url = st.text_input("Enter image URL for upscaling", "")
+            if st.button("Upscale Image"):
+                if image_url:
+                    upscale_output = upscale_image(image_url)
+                    st.image(upscale_output)
+                else:
+                    st.write("Please provide an image URL.")
