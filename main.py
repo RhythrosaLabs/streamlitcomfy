@@ -5,6 +5,7 @@ from PIL import Image
 import io
 import networkx as nx
 from streamlit_agraph import agraph, Node, Edge, Config
+import os
 
 class AINode:
     def __init__(self, id, name, model_id, input_type, output_type):
@@ -21,6 +22,9 @@ def download_image(url):
 
 def process_replicate(node, input_data, api_key, **kwargs):
     try:
+        # Set the API key in the environment variable
+        os.environ["REPLICATE_API_TOKEN"] = api_key
+
         if node.input_type == "text":
             model_input = {"prompt": input_data}
         elif node.input_type == "image":
@@ -44,6 +48,7 @@ def process_replicate(node, input_data, api_key, **kwargs):
         
         model_input.update(kwargs)
         
+        # Use replicate.run with the model_id and input
         output = replicate.run(node.model_id, input=model_input)
         
         if isinstance(output, list) and len(output) > 0:
@@ -68,6 +73,10 @@ def main():
 
     # API key input
     api_key = st.sidebar.text_input("Replicate API Key", type="password")
+
+    # Set the API key in the environment variable
+    if api_key:
+        os.environ["REPLICATE_API_TOKEN"] = api_key
 
     # Available AI nodes
     available_nodes = [
@@ -154,7 +163,7 @@ def main():
                     user_input = Image.open(user_input)
 
             if st.button("Run Pipeline", key="run_pipeline"):
-                if user_input:
+                if user_input and api_key:
                     with st.spinner("Processing..."):
                         current_output = user_input
                         for node_id in nx.topological_sort(st.session_state.workflow):
@@ -184,6 +193,8 @@ def main():
                                     st.write(current_output)
                         
                         st.success("Pipeline execution completed!")
+                elif not api_key:
+                    st.warning("Please enter your Replicate API key in the sidebar.")
                 else:
                     st.warning("Please provide input.")
         else:
