@@ -9,6 +9,7 @@ import logging
 import zipfile
 import os
 import base64
+import time
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -39,35 +40,62 @@ def verify_sd_api_key(sd_api_key):
         logger.error(f"Stable Diffusion API key verification failed: {str(e)}")
         return False
 
-def process_sd_image_to_video(api_key, init_image_url, prompt=None, clip_length=5, fps=12):
+def process_sd_image_to_video(api_key, image, prompt=None, cfg_scale=1.8, motion_bucket_id=127, seed=0):
     try:
         url = "https://api.stability.ai/v2beta/image-to-video"
         headers = {
             "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json"
-        }
-        data = {
-            "init_image": init_image_url,  # You need to provide a valid image URL
-            "text_prompts": [
-                {"text": prompt}
-            ] if prompt else [],
-            "clip_length": clip_length,  # Length of the generated video in seconds
-            "fps": fps  # Frames per second for the video
+            "stability-client-id": "streamlit-ai-pipeline-builder"  # You can customize this
         }
         
-        response = requests.post(url, json=data, headers=headers)
+        # Convert PIL Image to bytes
+        img_byte_arr = io.BytesIO()
+        image.save(img_byte_arr, format='PNG')
+        img_byte_arr = img_byte_arr.getvalue()
+        
+        files = {
+            "image": ("image.png", img_byte_arr, "image/png")
+        }
+        
+        data = {
+            "cfg_scale": cfg_scale,
+            "motion_bucket_id": motion_bucket_id,
+            "seed": seed
+        }
+        
+        if prompt:
+            data["text_prompts"] = [{"text": prompt}]
+        
+        response = requests.post(url, headers=headers, files=files, data=data)
         response.raise_for_status()
         
-        video_url = response.json().get("video_url")
-        return video_url
-    except Exception as e:
-        logger.error(f"Stable Diffusion API Error: {str(e)}")
+        generation_id = response.json().get("id")
+        if not generation_id:
+            raise ValueError("No generation ID received from the API")
+        
+        # Poll for results
+        result_url = f"https://api.stability.ai/v2beta/image-to-video/result/{generation_id}"
+        while True:
+            time.sleep(10)  # Wait for 10 seconds before polling
+            result_response = requests.get(result_url, headers=headers)
+            result_response.raise_for_status()
+            result_data = result_response.json()
+            
+            if result_data.get("status") == "succeeded":
+                return result_data.get("video_url")
+            elif result_data.get("status") == "failed":
+                raise Exception("Video generation failed: " + result_data.get("error", "Unknown error"))
+    
+    except requests.exceptions.RequestException as e:
         st.error(f"Stable Diffusion API Error: {str(e)}")
+        return None
+    except Exception as e:
+        st.error(f"An unexpected error occurred: {str(e)}")
         return None
 
 def process_replicate(node, input_data, **kwargs):
     try:
-        if not st.session_state.api_key:
+        if not st.session_state.replicate_api_key:
             logger.error("API key is missing")
             st.error("API key is missing. Please enter your Replicate API key in the sidebar.")
             return None
@@ -95,7 +123,7 @@ def process_replicate(node, input_data, **kwargs):
         
         logger.info(f"Model input: {model_input}")
         
-        client = replicate.Client(api_token=st.session_state.api_key)
+        client = replicate.Client(api_token=st.session_state.replicate_api_key)
         output = client.run(node.model_id, input=model_input)
         
         logger.info(f"Raw output: {output}")
@@ -149,36 +177,40 @@ def main():
     st.title("Replicate AI Pipeline Builder")
     st.sidebar.header("Settings")
 
-    if 'api_key' not in st.session_state:
-        st.session_state.api_key = ""
+    # Initialize session state for API keys
+    if 'replicate_api_key' not in st.session_state:
+        st.session_state.replicate_api_key = ""
     
-    if 'sd_api_key' not in st.session_state:
-        st.session_state.sd_api_key = ""
+    if 'stability_api_key' not in st.session_state:
+        st.session_state.stability_api_key = ""
     
     if 'generated_files' not in st.session_state:
         st.session_state.generated_files = []
     
-    api_key = st.sidebar.text_input("Replicate API Key", type="password", value=st.session_state.api_key)
-    sd_api_key = st.sidebar.text_input("Stable Diffusion API Key", type="password", value=st.session_state.sd_api_key)
+    # API key inputs
+    replicate_api_key = st.sidebar.text_input("Replicate API Key", type="password", value=st.session_state.replicate_api_key)
+    stability_api_key = st.sidebar.text_input("Stable Diffusion API Key", type="password", value=st.session_state.stability_api_key)
 
-    if api_key:
-        st.session_state.api_key = api_key
-        if verify_api_key(api_key):
+    # Verify and save Replicate API key
+    if replicate_api_key:
+        st.session_state.replicate_api_key = replicate_api_key
+        if verify_api_key(replicate_api_key):
             st.sidebar.success("Replicate API key verified successfully!")
         else:
             st.sidebar.error("Invalid Replicate API key. Please check and try again.")
 
-    if sd_api_key:
-        st.session_state.sd_api_key = sd_api_key
-        if verify_sd_api_key(sd_api_key):
-            st.sidebar.success("Stable Diffusion API key verified successfully!")
+    # Verify and save Stability AI API key
+    if stability_api_key:
+        st.session_state.stability_api_key = stability_api_key
+        if verify_sd_api_key(stability_api_key):
+            st.sidebar.success("Stability AI API key verified successfully!")
         else:
-            st.sidebar.error("Invalid Stable Diffusion API key. Please check and try again.")
+            st.sidebar.error("Invalid Stability AI API key. Please check and try again.")
 
     available_nodes = [
         AINode("flux", "Flux Schnell", "black-forest-labs/flux-schnell", "text", "image"),
         AINode("sdxl", "Stable Diffusion XL", "stability-ai/sdxl:a00d0b7dcbb9c3fbb34ba87d2d5b46c56969c84a628bf778a7fdaec30b1b99c5", "text", "image"),
-        AINode("video", "Stable Diffusion Image-to-Video", "stable-diffusion-image-to-video", "text", "video"),
+        AINode("video", "Stable Diffusion Image-to-Video", "stable-diffusion-image-to-video", "image", "video"),
         AINode("upscale", "Image Upscaling", "nightmareai/real-esrgan:42fed1c4974146d4d2414e2be2c5277c7fcf05fcc3a73abf41610695738c1d7b", "image", "image"),
         AINode("clip", "CLIP Image Interrogator", "andreasjansson/clip-interrogator:a4a8bafd6089e1716b06057c42b19378250d008b80fe87caa5cd36d40c1eda90", "image", "text"),
         AINode("controlnet", "ControlNet", "jagilley/controlnet-canny:aff48af9c68d162388d230a2ab003f68d2638d88307bdaf1c2f1ac95079c9613", "image", "image"),
@@ -265,7 +297,7 @@ def main():
                     user_input = Image.open(user_input)
 
             if st.button("Run Pipeline", key="run_pipeline"):
-                if user_input and (st.session_state.api_key or st.session_state.sd_api_key):
+                if user_input and (st.session_state.replicate_api_key or st.session_state.stability_api_key):
                     with st.spinner("Processing..."):
                         current_output = user_input
                         st.session_state.generated_files = []
@@ -276,7 +308,19 @@ def main():
                                 st.info(f"Processing node: {node.name}")
                                 if node.model_id == "stable-diffusion-image-to-video":
                                     # Use Stable Diffusion Image to Video API
-                                    current_output = process_sd_image_to_video(st.session_state.sd_api_key, current_output)
+                                    cfg_scale = st.slider("CFG Scale", 0.0, 10.0, 1.8, 0.1)
+                                    motion_bucket_id = st.slider("Motion Bucket ID", 1, 255, 127)
+                                    seed = st.number_input("Seed", 0, 4294967294, 0)
+                                    prompt = st.text_input("Optional Prompt")
+                                    
+                                    current_output = process_sd_image_to_video(
+                                        st.session_state.stability_api_key,
+                                        current_output,
+                                        prompt=prompt if prompt else None,
+                                        cfg_scale=cfg_scale,
+                                        motion_bucket_id=motion_bucket_id,
+                                        seed=seed
+                                    )
                                 else:
                                     current_output = process_replicate(node, current_output)
                                 
@@ -300,7 +344,7 @@ def main():
                                 st.session_state.generated_files.append(current_output)
                         
                         st.success("Pipeline execution completed!")
-                elif not (st.session_state.api_key or st.session_state.sd_api_key):
+                elif not (st.session_state.replicate_api_key or st.session_state.stability_api_key):
                     st.warning("Please enter your API keys in the sidebar.")
                 else:
                     st.warning("Please provide input.")
