@@ -1,1 +1,5 @@
-
+streamlit
+diffusers
+torch
+torchvision
+torchaudio
