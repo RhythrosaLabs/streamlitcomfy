@@ -17,8 +17,10 @@ api_key_input = st.text_input("Enter your Replicate API Key", type="password")
 # Button to save API key
 if st.button("Save API Key"):
     if api_key_input:
-        st.session_state["api_key"] = api_key_input
+        # Save the API key
+        st.session_state["api_key"] = api_key_input.strip()  # Strip any extra spaces/newlines
         st.success("API Key saved successfully!")
+        st.write(f"API Key (Debug): {st.session_state['api_key']}")  # Debugging output
     else:
         st.warning("Please enter a valid API key.")
 
@@ -100,6 +102,7 @@ if st.session_state["api_key"]:
         if st.button(f"Run Node {i + 1}"):
             try:
                 model_id = model_info["id"]
+                st.write(f"Running Model {model_id} (Debug)...")  # Debugging output
                 output = replicate.run(
                     f"{model_id}:latest",
                     input=st.session_state["nodes"][i]["params"],
@@ -110,17 +113,5 @@ if st.session_state["api_key"]:
                 st.write(f"Output for Node {i + 1}: {output}")
             except Exception as e:
                 st.error(f"Error in Node {i + 1}: {e}")
-
-    # Chain outputs
-    st.write("### Chain Outputs Between Nodes")
-    for i in range(len(st.session_state["nodes"]) - 1):
-        if f"Node_{i+1}_output" in st.session_state["outputs"]:
-            st.write(f"Passing output from Node {i + 1} to Node {i + 2}")
-            next_node = st.session_state["nodes"][i + 1]
-            if isinstance(st.session_state["outputs"][f"Node_{i+1}_output"], str):  # For text models
-                next_node["params"]["prompt"] = st.session_state["outputs"][f"Node_{i+1}_output"]
-            elif isinstance(st.session_state["outputs"][f"Node_{i+1}_output"], bytes):  # For image models
-                next_node["params"]["image"] = st.session_state["outputs"][f"Node_{i+1}_output"]
-
 else:
     st.warning("Please enter your Replicate API key and click 'Save API Key' to proceed.")
