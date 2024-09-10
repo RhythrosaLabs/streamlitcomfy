@@ -1,5 +1,4 @@
 import streamlit as st
-import streamlit_nested_layout
 from streamlit_elements import elements, dashboard, mui, html
 import replicate
 import requests
@@ -137,57 +136,60 @@ def main():
 
     st.title("Interactive AI Pipeline Builder")
 
-    with elements("interactive_graph"):
-        layout = [
-            dashboard.Item("graph", 0, 0, 10, 10),
-            dashboard.Item("node_params", 10, 0, 2, 10),
-        ]
-        
-        with dashboard.Grid(layout):
-            with mui.Box(key="graph", sx={"height": "100%", "width": "100%"}):
-                nodes = [
-                    {
-                        "id": node_id,
-                        "data": {"label": node.name, "type": node.input_type},
-                        "position": {"x": 100 * i, "y": 100},
-                    }
-                    for i, (node_id, node) in enumerate(st.session_state.nodes.items())
-                ]
-                
-                edges = [
-                    {
-                        "id": f"e{source}-{target}",
-                        "source": source,
-                        "target": target,
-                    }
-                    for source, target in st.session_state.connections
-                ]
+    col1, col2 = st.columns([3, 1])
 
-                elements = nodes + edges
+    with col1:
+        with elements("interactive_graph"):
+            layout = [
+                dashboard.Item("graph", 0, 0, 12, 6),
+            ]
+            
+            with dashboard.Grid(layout):
+                with mui.Box(key="graph", sx={"height": "100%", "width": "100%"}):
+                    nodes = [
+                        {
+                            "id": node_id,
+                            "data": {"label": node.name, "type": node.input_type},
+                            "position": {"x": 100 * i, "y": 100},
+                        }
+                        for i, (node_id, node) in enumerate(st.session_state.nodes.items())
+                    ]
+                    
+                    edges = [
+                        {
+                            "id": f"e{source}-{target}",
+                            "source": source,
+                            "target": target,
+                        }
+                        for source, target in st.session_state.connections
+                    ]
 
-                event = html.Div().graph(
-                    id="graph",
-                    elements=elements,
-                    layout={"name": "dagre", "rankDir": "LR"},
-                    style={"width": "100%", "height": "500px"},
-                    boxSelection=True,
-                )
+                    elements = nodes + edges
 
-                if event.type == "select":
-                    selected_node_id = event.data["nodes"][0]
-                    st.session_state.selected_node = st.session_state.nodes[selected_node_id]
+                    event = html.Div().graph(
+                        id="graph",
+                        elements=elements,
+                        layout={"name": "dagre", "rankDir": "LR"},
+                        style={"width": "100%", "height": "500px"},
+                        boxSelection=True,
+                    )
 
-            with mui.Box(key="node_params"):
-                if hasattr(st.session_state, 'selected_node'):
-                    node = st.session_state.selected_node
-                    mui.Typography(f"Parameters for {node.name}")
-                    for param, value in node.parameters.items():
-                        if isinstance(value, bool):
-                            node.parameters[param] = mui.Switch(label=param, checked=value)
-                        elif isinstance(value, (int, float)):
-                            node.parameters[param] = mui.Slider(label=param, value=value, min=0, max=100, step=1)
-                        else:
-                            node.parameters[param] = mui.TextField(label=param, value=str(value))
+                    if event.type == "select":
+                        selected_node_id = event.data["nodes"][0]
+                        st.session_state.selected_node = st.session_state.nodes[selected_node_id]
+
+    with col2:
+        st.subheader("Node Parameters")
+        if hasattr(st.session_state, 'selected_node'):
+            node = st.session_state.selected_node
+            st.write(f"Parameters for {node.name}")
+            for param, value in node.parameters.items():
+                if isinstance(value, bool):
+                    node.parameters[param] = st.checkbox(param, value)
+                elif isinstance(value, (int, float)):
+                    node.parameters[param] = st.slider(param, 0, 100, int(value))
+                else:
+                    node.parameters[param] = st.text_input(param, str(value))
 
     st.sidebar.subheader("Add Node")
     selected_node = st.sidebar.selectbox("Select a node to add", available_nodes, format_func=lambda x: x.name)
