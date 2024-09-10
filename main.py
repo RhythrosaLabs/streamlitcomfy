@@ -9,6 +9,7 @@ import logging
 import zipfile
 import os
 import base64
+from presets import get_presets, Preset  # Import the presets
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -120,14 +121,25 @@ def main():
     
     if 'generated_files' not in st.session_state:
         st.session_state.generated_files = []
-    
-    api_key = st.sidebar.text_input("Replicate API Key", type="password", value=st.session_state.api_key)
-    if api_key:
-        st.session_state.api_key = api_key
-        if verify_api_key(api_key):
-            st.sidebar.success("API key verified successfully!")
-        else:
-            st.sidebar.error("Invalid API key. Please check and try again.")
+
+    # Load available presets
+    presets = get_presets()
+    preset_options = [preset.name for preset in presets]
+
+    # Allow user to select a preset workflow
+    st.sidebar.subheader("Select a Preset Workflow")
+    selected_preset = st.sidebar.selectbox("Preset Workflow", preset_options)
+
+    # If a preset is selected, load the nodes into the workflow
+    if selected_preset:
+        preset = next(p for p in presets if p.name == selected_preset)
+        st.session_state.workflow = nx.DiGraph()  # Reset workflow
+
+        for i, node in enumerate(preset.node_sequence):
+            st.session_state.workflow.add_node(node.id, node=node)
+            st.session_state.node_positions[node.id] = (i * 100, 0)  # Arrange positions of nodes
+
+        st.success(f"Loaded preset: {selected_preset}")
 
     available_nodes = [
         AINode("flux", "Flux Schnell", "black-forest-labs/flux-schnell", "text", "image"),
