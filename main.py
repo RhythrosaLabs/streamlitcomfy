@@ -191,6 +191,12 @@ def main():
                 else:
                     st.write("No connections to remove.")
 
+        # Add "Remove All Nodes" button
+        if st.button("Remove All Nodes", key="remove_all_nodes"):
+            st.session_state.workflow.clear()
+            st.session_state.node_positions.clear()
+            st.success("All nodes and connections have been removed.")
+
     with col2:
         st.subheader("Workflow Visualization")
         nodes = [Node(id=n, label=data['node'].name, x=st.session_state.node_positions[n][0], y=st.session_state.node_positions[n][1]) 
