@@ -33,26 +33,31 @@ def verify_api_key(api_key):
 
 def verify_sd_api_key(sd_api_key):
     try:
-        response = requests.get("https://api.stable-diffusion.com/status", headers={"Authorization": f"Bearer {sd_api_key}"})
+        response = requests.get("https://api.stability.ai/v2beta/status", headers={"Authorization": f"Bearer {sd_api_key}"})
         return response.status_code == 200
     except Exception as e:
         logger.error(f"Stable Diffusion API key verification failed: {str(e)}")
         return False
 
-def process_sd_image_to_video(api_key, prompt, num_frames=10, frame_rate=5):
+def process_sd_image_to_video(api_key, init_image_url, prompt=None, clip_length=5, fps=12):
     try:
-        url = "https://api.stable-diffusion.com/image-to-video"
+        url = "https://api.stability.ai/v2beta/image-to-video"
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
         data = {
-            "prompt": prompt,
-            "num_frames": num_frames,
-            "frame_rate": frame_rate
+            "init_image": init_image_url,  # You need to provide a valid image URL
+            "text_prompts": [
+                {"text": prompt}
+            ] if prompt else [],
+            "clip_length": clip_length,  # Length of the generated video in seconds
+            "fps": fps  # Frames per second for the video
         }
+        
         response = requests.post(url, json=data, headers=headers)
         response.raise_for_status()
+        
         video_url = response.json().get("video_url")
         return video_url
     except Exception as e:
@@ -173,7 +178,7 @@ def main():
     available_nodes = [
         AINode("flux", "Flux Schnell", "black-forest-labs/flux-schnell", "text", "image"),
         AINode("sdxl", "Stable Diffusion XL", "stability-ai/sdxl:a00d0b7dcbb9c3fbb34ba87d2d5b46c56969c84a628bf778a7fdaec30b1b99c5", "text", "image"),
-        AINode("video", "Stable Diffusion Image-to-Video", "custom-stable-diffusion-video", "text", "video"),  # Custom node
+        AINode("video", "Stable Diffusion Image-to-Video", "stable-diffusion-image-to-video", "text", "video"),
         AINode("upscale", "Image Upscaling", "nightmareai/real-esrgan:42fed1c4974146d4d2414e2be2c5277c7fcf05fcc3a73abf41610695738c1d7b", "image", "image"),
         AINode("clip", "CLIP Image Interrogator", "andreasjansson/clip-interrogator:a4a8bafd6089e1716b06057c42b19378250d008b80fe87caa5cd36d40c1eda90", "image", "text"),
         AINode("controlnet", "ControlNet", "jagilley/controlnet-canny:aff48af9c68d162388d230a2ab003f68d2638d88307bdaf1c2f1ac95079c9613", "image", "image"),
@@ -269,7 +274,7 @@ def main():
                             
                             with st.expander(f"Processing: {node.name}", expanded=True):
                                 st.info(f"Processing node: {node.name}")
-                                if node.model_id == "custom-stable-diffusion-video":
+                                if node.model_id == "stable-diffusion-image-to-video":
                                     # Use Stable Diffusion Image to Video API
                                     current_output = process_sd_image_to_video(st.session_state.sd_api_key, current_output)
                                 else:
