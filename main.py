@@ -17,30 +17,62 @@ class AINode:
         self.output_type = output_type
 
 def process_replicate(node, input_data, api_key, **kwargs):
-    client = replicate.Client(api_token=api_key)
-    output = client.run(node.model_id, input={"image": input_data, **kwargs})
-    return output
+    try:
+        client = replicate.Client(api_token=api_key)
+        
+        # Prepare the input based on the node's input_type
+        if node.input_type == "text":
+            model_input = {"prompt": input_data}
+        elif node.input_type == "image":
+            if isinstance(input_data, Image.Image):
+                # Convert PIL Image to bytes
+                img_byte_arr = io.BytesIO()
+                input_data.save(img_byte_arr, format='PNG')
+                model_input = {"image": img_byte_arr.getvalue()}
+            else:
+                model_input = {"image": input_data}
+        else:
+            raise ValueError(f"Unsupported input type: {node.input_type}")
+        
+        # Merge any additional kwargs
+        model_input.update(kwargs)
+        
+        # Run the model
+        output = client.run(node.model_id, input=model_input)
+        return output
+    except replicate.exceptions.ReplicateError as e:
+        st.error(f"Replicate API Error: {str(e)}")
+        st.error("Please check your API key and model settings.")
+        return None
+    except Exception as e:
+        st.error(f"An unexpected error occurred: {str(e)}")
+        return None
 
 def process_stability(node, input_data, api_key, **kwargs):
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "text_prompts": [{"text": input_data}],
-        **kwargs
-    }
-    response = requests.post(f"https://api.stability.ai/v1/generation/{node.model_id}/text-to-image", headers=headers, json=payload)
-    if response.status_code == 200:
+    try:
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "text_prompts": [{"text": input_data}],
+            **kwargs
+        }
+        response = requests.post(f"https://api.stability.ai/v1/generation/{node.model_id}/text-to-image", headers=headers, json=payload)
+        response.raise_for_status()
         data = response.json()
         image_data = base64.b64decode(data['artifacts'][0]['base64'])
         return Image.open(io.BytesIO(image_data))
-    else:
-        st.error(f"Error: {response.status_code}, {response.text}")
+    except requests.exceptions.RequestException as e:
+        st.error(f"Stability AI API Error: {str(e)}")
+        st.error("Please check your API key and model settings.")
+        return None
+    except Exception as e:
+        st.error(f"An unexpected error occurred: {str(e)}")
         return None
 
 def main():
-    st.title("Revised Custom AI Pipeline")
+    st.title("Custom AI Pipeline")
 
     # API key inputs
     api_keys = {
@@ -84,7 +116,7 @@ def main():
             if st.button("Remove Node"):
                 st.session_state.workflow.remove_node(node_to_remove)
                 del st.session_state.node_positions[node_to_remove]
-                st.success(f"Removed {st.session_state.workflow.nodes[node_to_remove]['node'].name} from the workflow.")
+                st.success(f"Removed {node_to_remove} from the workflow.")
         else:
             st.write("No nodes to remove.")
 
@@ -149,6 +181,7 @@ def main():
                                 st.error(f"API key missing for {node.api_type}")
                                 break
                             
+                            st.write(f"Processing node: {node.name}")
                             if node.api_type == "replicate":
                                 current_output = process_replicate(node, current_output, api_key)
                             elif node.api_type == "stability":
@@ -156,13 +189,20 @@ def main():
                             else:
                                 st.error(f"Unsupported API type: {node.api_type}")
                                 break
+                            
+                            if current_output is None:
+                                st.error(f"Processing failed at node: {node.name}")
+                                break
+                            
+                            st.write(f"Output from {node.name}:")
+                            if isinstance(current_output, Image.Image):
+                                st.image(current_output, caption=f"Output from {node.name}", use_column_width=True)
+                            elif isinstance(current_output, str) and current_output.startswith("http"):
+                                st.video(current_output)
+                            else:
+                                st.write(current_output)
                         
-                        if isinstance(current_output, Image.Image):
-                            st.image(current_output, caption="Generated Image", use_column_width=True)
-                        elif isinstance(current_output, str) and current_output.startswith("http"):
-                            st.video(current_output)
-                        else:
-                            st.write(current_output)
+                        st.success("Pipeline execution completed!")
                 else:
                     st.warning("Please provide input.")
         else:
