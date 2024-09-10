@@ -1,126 +1,158 @@
 import streamlit as st
+import requests
 import replicate
+import base64
+import os
+from PIL import Image
+import io
+import json
+from graphviz import Digraph
 
-# Initialize session state for nodes, outputs, and API key
-if "nodes" not in st.session_state:
-    st.session_state["nodes"] = []
+class AINode:
+    def __init__(self, name, api_type, model_id, input_type, output_type, parameters):
+        self.name = name
+        self.api_type = api_type
+        self.model_id = model_id
+        self.input_type = input_type
+        self.output_type = output_type
+        self.parameters = parameters
 
-if "outputs" not in st.session_state:
-    st.session_state["outputs"] = {}
+    def process(self, input_data, api_key, **kwargs):
+        try:
+            if self.api_type == "replicate":
+                client = replicate.Client(api_token=api_key)
+                output = client.run(self.model_id, input={"image": input_data, **kwargs})
+                return output
+            elif self.api_type == "stability":
+                headers = {
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json"
+                }
+                payload = {
+                    "text_prompts": [{"text": input_data}],
+                    **kwargs
+                }
+                response = requests.post(f"https://api.stability.ai/v1/generation/{self.model_id}/text-to-image", headers=headers, json=payload)
+                if response.status_code == 200:
+                    data = response.json()
+                    image_data = base64.b64decode(data['artifacts'][0]['base64'])
+                    return Image.open(io.BytesIO(image_data))
+                else:
+                    raise Exception(f"API Error: {response.status_code}, {response.text}")
+        except Exception as e:
+            raise Exception(f"Error processing {self.name}: {str(e)}")
 
-if "api_key" not in st.session_state:
-    st.session_state["api_key"] = None
+class AIPipeline:
+    def __init__(self):
+        self.nodes = []
 
-# Input for the API Key
-api_key_input = st.text_input("Enter your Replicate API Key", type="password")
+    def add_node(self, node):
+        self.nodes.append(node)
 
-# Button to save API key
-if st.button("Save API Key"):
-    if api_key_input:
-        st.session_state["api_key"] = api_key_input
-        st.success("API Key saved successfully!")
+    def run(self, initial_input, api_keys):
+        current_output = initial_input
+        outputs = []
+        for node in self.nodes:
+            api_key = api_keys.get(node.api_type)
+            if api_key:
+                current_output = node.process(current_output, api_key)
+                outputs.append(current_output)
+            else:
+                raise Exception(f"API key missing for {node.api_type}")
+        return outputs
+
+    def visualize(self):
+        dot = Digraph(comment='AI Pipeline')
+        for i, node in enumerate(self.nodes):
+            dot.node(f'node_{i}', node.name)
+            if i > 0:
+                dot.edge(f'node_{i-1}', f'node_{i}')
+        return dot
+
+def render_output(output, output_type):
+    if output_type == "image":
+        st.image(output, caption="Generated Image", use_column_width=True)
+    elif output_type == "video" and isinstance(output, str) and output.startswith("http"):
+        st.video(output)
     else:
-        st.warning("Please enter a valid API key.")
+        st.write(output)
 
-# Check if the API key is set in session state
-if st.session_state["api_key"]:
-    api_key = st.session_state["api_key"]
-    client = replicate.Client(api_token=api_key)
+def main():
+    st.title("Enhanced Multi-Modal AI Pipeline")
 
-    # List of available models and their parameters
-    available_models = {
-        "LLaMA 70b (Text Generation)": {
-            "id": "replicate/llama-70b",  # Double check this model name
-            "params": ["prompt", "max_length", "temperature"]
-        },
-        "Flux Pro (Art Generation)": {
-            "id": "black-forest-labs/flux-pro",  # Double check this model name
-            "params": ["prompt", "style", "guidance_scale"]
-        },
-        "Image Upscaler": {
-            "id": "stability-ai/stable-diffusion-x4-upscaler",  # Confirm this slug exists
-            "params": ["image", "upscale_factor"]
-        }
+    # API key inputs
+    api_keys = {
+        "replicate": st.sidebar.text_input("Replicate API Key", type="password"),
+        "stability": st.sidebar.text_input("Stability AI API Key", type="password"),
     }
 
-    # Add new node
+    # Available AI nodes
+    available_nodes = [
+        AINode("Stable Diffusion", "replicate", "stability-ai/stable-diffusion:db21e45d3f7023abc2a46ee38a23973f6dce16bb082a930b0c49861f96d1e5bf", "text", "image", 
+               ["prompt", "num_inference_steps", "guidance_scale"]),
+        AINode("DALL-E 3", "stability", "stable-diffusion-xl-1024-v1-0", "text", "image", 
+               ["prompt", "width", "height"]),
+        AINode("Video Generation", "replicate", "anotherjesse/zeroscope-v2-xl:9f747673945c62801b13b84701c783929c0ee784e4748ec062204894dda1a351", "text", "video", 
+               ["prompt", "frames", "fps"]),
+        AINode("Image Upscaling", "replicate", "nightmareai/real-esrgan:42fed1c4974146d4d2414e2be2c5277c7fcf05fcc3a73abf41610695738c1d7b", "image", "image", 
+               ["image", "scale"]),
+    ]
+
+    # Pipeline creation
+    if 'pipeline' not in st.session_state:
+        st.session_state.pipeline = AIPipeline()
+
+    selected_node = st.selectbox("Select AI node to add to your pipeline", available_nodes, format_func=lambda x: x.name)
     if st.button("Add Node"):
-        st.session_state["nodes"].append({
-            "model": "LLaMA 70b (Text Generation)",  # Default model
-            "params": {},
-            "output": None
-        })
+        st.session_state.pipeline.add_node(selected_node)
 
     # Display and configure nodes
-    for i, node in enumerate(st.session_state["nodes"]):
-        st.write(f"### Node {i + 1}")
-        
-        # Select model
-        model_name = st.selectbox(f"Choose Model for Node {i + 1}", list(available_models.keys()), key=f"model_{i}")
-        st.session_state["nodes"][i]["model"] = model_name
+    for i, node in enumerate(st.session_state.pipeline.nodes):
+        st.write(f"### Node {i+1}: {node.name}")
+        for param in node.parameters:
+            if param == "image":
+                node.parameters[param] = st.file_uploader(f"{param} for {node.name}", type=["png", "jpg", "jpeg"])
+            elif param in ["num_inference_steps", "width", "height", "frames", "fps", "scale"]:
+                node.parameters[param] = st.number_input(f"{param} for {node.name}", min_value=1, value=50)
+            elif param == "guidance_scale":
+                node.parameters[param] = st.slider(f"{param} for {node.name}", min_value=1.0, max_value=20.0, value=7.5)
+            else:
+                node.parameters[param] = st.text_input(f"{param} for {node.name}")
 
-        # Get model info
-        model_info = available_models[model_name]
-
-        # Input parameters based on model
-        if model_name == "LLaMA 70b (Text Generation)":
-            prompt = st.text_area(f"Prompt for Node {i + 1}", key=f"prompt_{i}")
-            max_length = st.slider(f"Max Length for Node {i + 1}", 50, 500, 150, key=f"max_length_{i}")
-            temperature = st.slider(f"Temperature for Node {i + 1}", 0.0, 1.0, 0.75, key=f"temperature_{i}")
-            st.session_state["nodes"][i]["params"] = {
-                "prompt": prompt,
-                "max_length": max_length,
-                "temperature": temperature
-            }
-
-        elif model_name == "Flux Pro (Art Generation)":
-            prompt = st.text_area(f"Art Prompt for Node {i + 1}", key=f"prompt_{i}")
-            style = st.selectbox(f"Style for Node {i + 1}", ["abstract", "cyberpunk", "fantasy", "realistic"], key=f"style_{i}")
-            guidance_scale = st.slider(f"Guidance Scale for Node {i + 1}", 0.5, 20.0, 7.5, key=f"guidance_scale_{i}")
-            st.session_state["nodes"][i]["params"] = {
-                "prompt": prompt,
-                "style": style,
-                "guidance_scale": guidance_scale
-            }
-
-        elif model_name == "Image Upscaler":
-            uploaded_file = st.file_uploader(f"Upload an Image for Node {i + 1}", type=["png", "jpg", "jpeg"], key=f"image_{i}")
-            upscale_factor = st.slider(f"Upscale Factor for Node {i + 1}", 2, 8, 4, key=f"upscale_factor_{i}")
-            st.session_state["nodes"][i]["params"] = {
-                "image": uploaded_file,
-                "upscale_factor": upscale_factor
-            }
-
-        # Button to remove node
-        if st.button(f"Remove Node {i + 1}"):
-            st.session_state["nodes"].pop(i)
+        if st.button(f"Remove Node {i+1}"):
+            st.session_state.pipeline.nodes.pop(i)
             st.experimental_rerun()
 
-        # Run model and get output using replicate.run, explicitly passing the API key
-        if st.button(f"Run Node {i + 1}"):
-            try:
-                model_id = model_info["id"]
-                output = replicate.run(
-                    f"{model_id}:latest",
-                    input=st.session_state["nodes"][i]["params"],
-                    api_token=st.session_state["api_key"]  # Explicitly passing the API key
-                )
-                st.session_state["nodes"][i]["output"] = output
-                st.session_state["outputs"][f"Node_{i+1}_output"] = output
-                st.write(f"Output for Node {i + 1}: {output}")
-            except Exception as e:
-                st.error(f"Error in Node {i + 1}: {e}")
+    # Visualize pipeline
+    if st.session_state.pipeline.nodes:
+        st.graphviz_chart(st.session_state.pipeline.visualize())
 
-    # Chain outputs
-    st.write("### Chain Outputs Between Nodes")
-    for i in range(len(st.session_state["nodes"]) - 1):
-        if f"Node_{i+1}_output" in st.session_state["outputs"]:
-            st.write(f"Passing output from Node {i + 1} to Node {i + 2}")
-            next_node = st.session_state["nodes"][i + 1]
-            if isinstance(st.session_state["outputs"][f"Node_{i+1}_output"], str):  # For text models
-                next_node["params"]["prompt"] = st.session_state["outputs"][f"Node_{i+1}_output"]
-            elif isinstance(st.session_state["outputs"][f"Node_{i+1}_output"], bytes):  # For image models
-                next_node["params"]["image"] = st.session_state["outputs"][f"Node_{i+1}_output"]
+    # Run pipeline
+    if st.button("Run Pipeline"):
+        try:
+            with st.spinner("Processing..."):
+                outputs = st.session_state.pipeline.run(st.session_state.pipeline.nodes[0].parameters["prompt"], api_keys)
+                for i, output in enumerate(outputs):
+                    st.write(f"### Output from Node {i+1}")
+                    render_output(output, st.session_state.pipeline.nodes[i].output_type)
+        except Exception as e:
+            st.error(f"Error: {str(e)}")
 
-else:
-    st.warning("Please enter your Replicate API key and click 'Save API Key' to proceed.")
+    # Save/Load Pipeline
+    if st.button("Save Pipeline"):
+        pipeline_data = json.dumps([{"name": node.name, "parameters": node.parameters} for node in st.session_state.pipeline.nodes])
+        st.download_button("Download Pipeline", pipeline_data, "pipeline.json", "application/json")
+
+    uploaded_file = st.file_uploader("Load Pipeline", type="json")
+    if uploaded_file is not None:
+        pipeline_data = json.load(uploaded_file)
+        st.session_state.pipeline = AIPipeline()
+        for node_data in pipeline_data:
+            node = next((n for n in available_nodes if n.name == node_data["name"]), None)
+            if node:
+                node.parameters = node_data["parameters"]
+                st.session_state.pipeline.add_node(node)
+        st.experimental_rerun()
+
+if __name__ == "__main__":
+    main()
