@@ -22,7 +22,6 @@ class AINode:
 def verify_api_key(api_key):
     try:
         client = replicate.Client(api_token=api_key)
-        # Try to list models (this should work with any valid API key)
         client.models.list()
         return True
     except replicate.exceptions.ReplicateError as e:
@@ -59,7 +58,6 @@ def process_replicate(node, input_data, **kwargs):
         
         logger.info(f"Model input: {model_input}")
         
-        # Use replicate.run with the model_id, input, and API key
         client = replicate.Client(api_token=st.session_state.api_key)
         output = client.run(node.model_id, input=model_input)
         
@@ -87,7 +85,6 @@ def main():
     st.title("Replicate AI Pipeline Builder")
     st.sidebar.header("Settings")
 
-    # API key input and verification
     if 'api_key' not in st.session_state:
         st.session_state.api_key = ""
     
@@ -99,27 +96,29 @@ def main():
         else:
             st.sidebar.error("Invalid API key. Please check and try again.")
 
-    # Available AI nodes
     available_nodes = [
         AINode("flux", "Flux Schnell", "black-forest-labs/flux-schnell", "text", "image"),
         AINode("sdxl", "Stable Diffusion XL", "stability-ai/sdxl:a00d0b7dcbb9c3fbb34ba87d2d5b46c56969c84a628bf778a7fdaec30b1b99c5", "text", "image"),
         AINode("video", "Video Generation", "anotherjesse/zeroscope-v2-xl:9f747673945c62801b13b84701c783929c0ee784e4748ec062204894dda1a351", "text", "video"),
         AINode("upscale", "Image Upscaling", "nightmareai/real-esrgan:42fed1c4974146d4d2414e2be2c5277c7fcf05fcc3a73abf41610695738c1d7b", "image", "image"),
+        AINode("clip", "CLIP Image Interrogator", "andreasjansson/clip-interrogator:a4a8bafd6089e1716b06057c42b19378250d008b80fe87caa5cd36d40c1eda90", "image", "text"),
+        AINode("controlnet", "ControlNet", "jagilley/controlnet-canny:aff48af9c68d162388d230a2ab003f68d2638d88307bdaf1c2f1ac95079c9613", "image", "image"),
+        AINode("instruct-pix2pix", "InstructPix2Pix", "timothybrooks/instruct-pix2pix:30c1d0b916a6f8efce20493f5d61ee27491ab2a60437c13c588468b9810ec23f", "image", "image"),
+        AINode("remove-bg", "Remove Background", "cjwbw/rembg:fb8af171cfa1616ddcf1242c093f9c46bcada5ad4cf6f2fbe8b81b330ec5c003", "image", "image"),
+        AINode("llama", "LLaMA 13B", "replicate/llama-2-13b-chat:f4e2de70d66816a838a89eeeb621910adffb0dd0baba3976c96980970978018d", "text", "text"),
+        AINode("music-gen", "MusicGen", "meta/musicgen:7a76a8258b23fae65c5a22debb8841d1d7e816b75c2f24218cd2bd8573787906", "text", "audio"),
     ]
 
-    # Initialize session state
     if 'workflow' not in st.session_state:
         st.session_state.workflow = nx.DiGraph()
     if 'node_positions' not in st.session_state:
         st.session_state.node_positions = {}
 
-    # Main area
     col1, col2 = st.columns([2, 3])
 
     with col1:
         st.subheader("Pipeline Builder")
         
-        # Node management
         with st.expander("Add Node", expanded=True):
             selected_node = st.selectbox("Select a node to add", available_nodes, format_func=lambda x: x.name)
             if st.button("Add Node", key="add_node"):
@@ -130,7 +129,6 @@ def main():
                 else:
                     st.warning(f"{selected_node.name} is already in the workflow.")
 
-        # Node connection
         if len(st.session_state.workflow.nodes) > 1:
             with st.expander("Connect Nodes", expanded=True):
                 source = st.selectbox("From", list(st.session_state.workflow.nodes), format_func=lambda x: st.session_state.workflow.nodes[x]['node'].name)
@@ -142,7 +140,6 @@ def main():
                     else:
                         st.warning("These nodes are already connected.")
 
-        # Node and Edge removal
         with st.expander("Remove Node or Connection", expanded=True):
             remove_type = st.radio("Select what to remove:", ["Node", "Connection"])
             if remove_type == "Node":
@@ -169,7 +166,6 @@ def main():
         config = Config(width=600, height=400, directed=True, physics=True, hierarchical=False)
         agraph(nodes=nodes, edges=edges, config=config)
 
-    # Pipeline execution
     st.subheader("Pipeline Execution")
     if st.session_state.workflow.nodes:
         start_nodes = [n for n, d in st.session_state.workflow.in_degree() if d == 0]
@@ -192,14 +188,7 @@ def main():
                             
                             with st.expander(f"Processing: {node.name}", expanded=True):
                                 st.info(f"Processing node: {node.name}")
-                                if node.id == "flux":
-                                    current_output = process_replicate(node, current_output, 
-                                                                       num_outputs=1, 
-                                                                       aspect_ratio="1:1", 
-                                                                       output_format="webp", 
-                                                                       output_quality=80)
-                                else:
-                                    current_output = process_replicate(node, current_output)
+                                current_output = process_replicate(node, current_output)
                                 
                                 if current_output is None:
                                     st.error(f"Processing failed at node: {node.name}")
@@ -209,7 +198,12 @@ def main():
                                 if isinstance(current_output, Image.Image):
                                     st.image(current_output, caption=f"Output from {node.name}", use_column_width=True)
                                 elif isinstance(current_output, str) and current_output.startswith("http"):
-                                    st.image(current_output, caption=f"Output from {node.name}", use_column_width=True)
+                                    if node.output_type == "audio":
+                                        st.audio(current_output)
+                                    elif node.output_type == "video":
+                                        st.video(current_output)
+                                    else:
+                                        st.image(current_output, caption=f"Output from {node.name}", use_column_width=True)
                                 else:
                                     st.write(current_output)
                         
