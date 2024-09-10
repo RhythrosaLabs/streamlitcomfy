@@ -1,40 +1,46 @@
 import streamlit as st
 from streamlit_elements import elements, dashboard, mui
 
-# Initialize Replicate API key
-if 'replicate_key' not in st.session_state:
-    st.session_state['replicate_key'] = ''
-
-# Sidebar for API key input
-st.sidebar.title("API Key")
-st.sidebar.text_input("Replicate API Key", key="replicate_key", type="password")
-
 # Main interactive node-based UI using Streamlit Elements
 with elements("main"):
-    # Correctly initialize the Grid dashboard layout with draggable and resizable properties
-    with dashboard.Grid(cols=12, rowHeight=160) as grid:
-        # Define Node for LLaMA Text Generation
-        with grid.item("llama", 0, 0, 6, 2):
-            with mui.Paper(elevation=3):
-                st.write("### LLaMA 70B - Text Generation")
-                llama_prompt = st.text_input("Enter your text prompt for LLaMA", key="llama_prompt")
-                if st.button("Generate Text"):
-                    st.write(f"Generated Text: {llama_prompt}")
+    # Create a grid dashboard layout (draggable, resizable)
+    grid = dashboard.Grid(cols=12, rowHeight=160, compactType="vertical", draggableHandle=".drag-handle")
 
-        # Define Node for Flux Text-to-Image
-        with grid.item("flux", 6, 0, 6, 2):
-            with mui.Paper(elevation=3):
-                st.write("### Flux - Text to Image Generation")
-                flux_prompt = st.text_input("Enter your image prompt for Flux", key="flux_prompt")
-                if st.button("Generate Image"):
-                    st.write(f"Generated Image from prompt: {flux_prompt}")
+    # Example Node 1: User input and button
+    with grid.item("node1", 0, 0, 6, 2):
+        with mui.Paper(elevation=3):
+            st.write("### Node 1 - Input and Button")
+            user_input = st.text_input("Enter some text:", key="user_input")
+            if st.button("Submit"):
+                st.write(f"You entered: {user_input}")
 
-        # Define Node for Real-ESRGAN Image Upscaling
-        with grid.item("esrgan", 0, 2, 6, 2):
-            with mui.Paper(elevation=3):
-                st.write("### Real-ESRGAN - Image Upscaling")
-                image_url = st.text_input("Enter image URL for upscaling", key="image_url")
-                if st.button("Upscale Image"):
-                    st.write(f"Upscaled Image from URL: {image_url}")
+    # Example Node 2: Counter with buttons
+    with grid.item("node2", 6, 0, 6, 2):
+        with mui.Paper(elevation=3):
+            st.write("### Node 2 - Counter")
+            if 'counter' not in st.session_state:
+                st.session_state.counter = 0
+            st.write(f"Counter value: {st.session_state.counter}")
+            if st.button("Increment"):
+                st.session_state.counter += 1
+            if st.button("Decrement"):
+                st.session_state.counter -= 1
 
+    # Example Node 3: Dropdown and selection display
+    with grid.item("node3", 0, 2, 6, 2):
+        with mui.Paper(elevation=3):
+            st.write("### Node 3 - Dropdown Example")
+            options = ["Option 1", "Option 2", "Option 3"]
+            selected = st.selectbox("Choose an option:", options)
+            st.write(f"You selected: {selected}")
+
+    # Example Node 4: Image upload and display
+    with grid.item("node4", 6, 2, 6, 2):
+        with mui.Paper(elevation=3):
+            st.write("### Node 4 - Image Upload")
+            uploaded_file = st.file_uploader("Upload an image")
+            if uploaded_file is not None:
+                st.image(uploaded_file)
+
+    # Save and display the grid layout
     grid.save()
