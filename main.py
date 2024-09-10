@@ -1,42 +1,19 @@
 import streamlit as st
-import requests
 import replicate
-import base64
-import os
 from PIL import Image
-import io
+import requests
+from io import BytesIO
 
 class AINode:
-    def __init__(self, name, api_type, model_id, input_type, output_type):
+    def __init__(self, name, model_id, input_schema, output_schema):
         self.name = name
-        self.api_type = api_type
         self.model_id = model_id
-        self.input_type = input_type
-        self.output_type = output_type
+        self.input_schema = input_schema
+        self.output_schema = output_schema
 
-    def process(self, input_data, api_key, **kwargs):
-        if self.api_type == "replicate":
-            client = replicate.Client(api_token=api_key)
-            output = client.run(self.model_id, input={"image": input_data, **kwargs})
-            return output
-        elif self.api_type == "stability":
-            headers = {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json"
-            }
-            payload = {
-                "text_prompts": [{"text": input_data}],
-                **kwargs
-            }
-            response = requests.post(f"https://api.stability.ai/v1/generation/{self.model_id}/text-to-image", headers=headers, json=payload)
-            if response.status_code == 200:
-                data = response.json()
-                image_data = base64.b64decode(data['artifacts'][0]['base64'])
-                return Image.open(io.BytesIO(image_data))
-            else:
-                st.error(f"Error: {response.status_code}, {response.text}")
-                return None
-        # Add more API types as needed
+    def process(self, input_data, api_key):
+        client = replicate.Client(api_token=api_key)
+        return client.run(self.model_id, input=input_data)
 
 class AIPipeline:
     def __init__(self):
@@ -45,64 +22,87 @@ class AIPipeline:
     def add_node(self, node):
         self.nodes.append(node)
 
-    def run(self, initial_input, api_keys):
+    def run(self, initial_input, api_key):
         current_output = initial_input
         for node in self.nodes:
-            api_key = api_keys.get(node.api_type)
-            if api_key:
-                current_output = node.process(current_output, api_key)
-            else:
-                st.error(f"API key missing for {node.api_type}")
-                break
+            current_output = node.process(current_output, api_key)
         return current_output
 
-def main():
-    st.title("Multi-Modal AI Pipeline")
+def create_input_fields(schema):
+    inputs = {}
+    for key, value in schema['properties'].items():
+        if key == 'prompt':
+            inputs[key] = st.text_area(value['title'], help=value.get('description', ''))
+        elif value['type'] == 'integer':
+            inputs[key] = st.number_input(value['title'], min_value=value.get('minimum'), max_value=value.get('maximum'), value=value.get('default', 0), help=value.get('description', ''))
+        elif value['type'] == 'number':
+            inputs[key] = st.slider(value['title'], min_value=value.get('minimum', 0.0), max_value=value.get('maximum', 1.0), value=value.get('default', 0.5), help=value.get('description', ''))
+        elif value['type'] == 'string' and 'enum' in value:
+            inputs[key] = st.selectbox(value['title'], options=value['enum'], index=value['enum'].index(value.get('default', value['enum'][0])), help=value.get('description', ''))
+        elif value['type'] == 'boolean':
+            inputs[key] = st.checkbox(value['title'], value=value.get('default', False), help=value.get('description', ''))
+        elif value['type'] == 'string':
+            inputs[key] = st.text_input(value['title'], value=value.get('default', ''), help=value.get('description', ''))
+    return inputs
 
-    # API key inputs
-    api_keys = {
-        "replicate": st.sidebar.text_input("Replicate API Key", type="password"),
-        "stability": st.sidebar.text_input("Stability AI API Key", type="password"),
-        # Add more API keys as needed
+def main():
+    st.title("Replicate-based Multi-Modal AI Pipeline")
+
+    api_key = st.sidebar.text_input("Replicate API Key", type="password")
+
+    flux_pro_input_schema = {
+        "type": "object",
+        "properties": {
+            "prompt": {"type": "string", "title": "Prompt", "description": "Text prompt for image generation"},
+            "seed": {"type": "integer", "title": "Seed", "description": "Random seed. Set for reproducible generation"},
+            "steps": {"type": "integer", "title": "Steps", "default": 25, "maximum": 50, "minimum": 1, "description": "Number of diffusion steps"},
+            "guidance": {"type": "number", "title": "Guidance", "default": 3, "maximum": 5, "minimum": 2, "description": "Controls the balance between adherence to the text prompt and image quality/diversity"},
+            "interval": {"type": "number", "title": "Interval", "default": 2, "maximum": 4, "minimum": 1, "description": "Increases the variance in possible outputs"},
+            "aspect_ratio": {"type": "string", "title": "Aspect Ratio", "enum": ["1:1", "16:9", "2:3", "3:2", "4:5", "5:4", "9:16"], "default": "1:1"},
+            "output_format": {"type": "string", "title": "Output Format", "enum": ["webp", "jpg", "png"], "default": "webp"},
+            "output_quality": {"type": "integer", "title": "Output Quality", "default": 80, "maximum": 100, "minimum": 0},
+            "safety_tolerance": {"type": "integer", "title": "Safety Tolerance", "default": 2, "maximum": 5, "minimum": 1}
+        }
     }
 
-    # Available AI nodes
+    llama_input_schema = {
+        "type": "object",
+        "properties": {
+            "prompt": {"type": "string", "title": "Prompt", "description": "Prompt to send to the model"},
+            "top_p": {"type": "number", "title": "Top P", "default": 0.9, "maximum": 1, "minimum": 0},
+            "min_tokens": {"type": "integer", "title": "Min Tokens", "default": 0, "minimum": 0},
+            "temperature": {"type": "number", "title": "Temperature", "default": 0.6, "maximum": 5, "minimum": 0},
+            "prompt_template": {"type": "string", "title": "Prompt Template", "default": "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\nYou are a helpful assistant<|eot_id|><|start_header_id|>user<|end_header_id|>\n\n{prompt}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"},
+            "presence_penalty": {"type": "number", "title": "Presence Penalty", "default": 1.15, "maximum": 2, "minimum": 0}
+        }
+    }
+
     available_nodes = [
-        AINode("Stable Diffusion", "replicate", "stability-ai/stable-diffusion:db21e45d3f7023abc2a46ee38a23973f6dce16bb082a930b0c49861f96d1e5bf", "text", "image"),
-        AINode("DALL-E 3", "stability", "stable-diffusion-xl-1024-v1-0", "text", "image"),
-        AINode("Video Generation", "replicate", "anotherjesse/zeroscope-v2-xl:9f747673945c62801b13b84701c783929c0ee784e4748ec062204894dda1a351", "text", "video"),
-        AINode("Image Upscaling", "replicate", "nightmareai/real-esrgan:42fed1c4974146d4d2414e2be2c5277c7fcf05fcc3a73abf41610695738c1d7b", "image", "image"),
-        # Add more nodes as needed
+        AINode("Flux Pro (Image Generation)", "black-forest-labs/flux-pro", flux_pro_input_schema, {"type": "string", "format": "uri"}),
+        AINode("Meta Llama 3 (Text Generation)", "meta/meta-llama-3-70b-instruct", llama_input_schema, {"type": "array", "items": {"type": "string"}})
     ]
 
-    # Pipeline creation
     pipeline = AIPipeline()
-    selected_nodes = st.multiselect("Select AI nodes for your pipeline", available_nodes, format_func=lambda x: x.name)
-    for node in selected_nodes:
-        pipeline.add_node(node)
+    selected_node = st.selectbox("Select AI model", available_nodes, format_func=lambda x: x.name)
+    pipeline.add_node(selected_node)
 
-    # Input
-    input_type = pipeline.nodes[0].input_type if pipeline.nodes else "text"
-    if input_type == "text":
-        user_input = st.text_area("Enter your prompt:")
-    elif input_type == "image":
-        user_input = st.file_uploader("Upload an image:", type=["png", "jpg", "jpeg"])
-        if user_input:
-            user_input = Image.open(user_input)
+    st.subheader(f"Input for {selected_node.name}")
+    input_data = create_input_fields(selected_node.input_schema)
 
-    # Run pipeline
     if st.button("Run Pipeline"):
-        if user_input:
+        if api_key:
             with st.spinner("Processing..."):
-                output = pipeline.run(user_input, api_keys)
-                if isinstance(output, Image.Image):
-                    st.image(output, caption="Generated Image", use_column_width=True)
-                elif isinstance(output, str) and output.startswith("http"):
-                    st.video(output)
+                output = pipeline.run(input_data, api_key)
+                if isinstance(output, str) and output.startswith("http"):
+                    response = requests.get(output)
+                    img = Image.open(BytesIO(response.content))
+                    st.image(img, caption="Generated Image", use_column_width=True)
+                elif isinstance(output, list):
+                    st.write("".join(output))
                 else:
                     st.write(output)
         else:
-            st.warning("Please provide input.")
+            st.warning("Please provide a Replicate API key.")
 
 if __name__ == "__main__":
     main()
