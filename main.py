@@ -6,15 +6,16 @@ import torch
 # Initialize models dictionary to store nodes' models
 models = {}
 
-# Define the function to load models dynamically
+# Function to load models dynamically
 @st.cache_resource(show_spinner=False)
 def load_model(model_choice):
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     if model_choice == "SD 1.x":
-        return StableDiffusionPipeline.from_pretrained("CompVis/stable-diffusion-v1-4").to("cuda")
+        return StableDiffusionPipeline.from_pretrained("CompVis/stable-diffusion-v1-4").to(device)
     elif model_choice == "SD 2.x":
-        return StableDiffusionPipeline.from_pretrained("stabilityai/stable-diffusion-2-1").to("cuda")
+        return StableDiffusionPipeline.from_pretrained("stabilityai/stable-diffusion-2-1").to(device)
     else:
-        return StableDiffusionPipeline.from_pretrained("stabilityai/stable-diffusion-xl").to("cuda")
+        return StableDiffusionPipeline.from_pretrained("stabilityai/stable-diffusion-xl").to(device)
 
 # Sidebar for task and model selection
 task = st.sidebar.selectbox("Select Task", ["Text to Image"])
@@ -45,9 +46,8 @@ with elements("dashboard"):
                 else:
                     st.warning("Node 1 is not connected or assigned a model.")
 
-# Generate button
+# Generate button for entire pipeline
 if st.sidebar.button("Generate Entire Pipeline"):
-    # Example: simulate pipeline generation from multiple nodes
     if "node1" in models:
         pipe = models["node1"]
         st.sidebar.write("Generating image from Node 1...")
