@@ -6,6 +6,9 @@ import io
 import networkx as nx
 from streamlit_agraph import agraph, Node, Edge, Config
 import logging
+import zipfile
+import os
+import base64
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -79,6 +82,33 @@ def process_replicate(node, input_data, **kwargs):
         st.error(f"An unexpected error occurred: {str(e)}")
         return None
 
+def download_file(url, filename):
+    response = requests.get(url)
+    return response.content
+
+def create_download_zip(files):
+    zip_filename = "generated_files.zip"
+    with zipfile.ZipFile(zip_filename, 'w') as zipf:
+        for i, file in enumerate(files):
+            if isinstance(file, str) and file.startswith("http"):
+                content = download_file(file, f"file_{i}")
+                ext = "txt" if file.endswith(".txt") else "png"  # Default to png for images
+                zipf.writestr(f"file_{i}.{ext}", content)
+            elif isinstance(file, Image.Image):
+                img_byte_arr = io.BytesIO()
+                file.save(img_byte_arr, format='PNG')
+                zipf.writestr(f"file_{i}.png", img_byte_arr.getvalue())
+            else:
+                zipf.writestr(f"file_{i}.txt", str(file))
+    
+    with open(zip_filename, "rb") as f:
+        bytes = f.read()
+        b64 = base64.b64encode(bytes).decode()
+        href = f'<a href="data:application/zip;base64,{b64}" download="{zip_filename}">Download Generated Files</a>'
+    
+    os.remove(zip_filename)
+    return href
+
 def main():
     st.set_page_config(page_title="Replicate AI Pipeline Builder", layout="wide")
     
@@ -87,6 +117,9 @@ def main():
 
     if 'api_key' not in st.session_state:
         st.session_state.api_key = ""
+    
+    if 'generated_files' not in st.session_state:
+        st.session_state.generated_files = []
     
     api_key = st.sidebar.text_input("Replicate API Key", type="password", value=st.session_state.api_key)
     if api_key:
@@ -183,6 +216,7 @@ def main():
                 if user_input and st.session_state.api_key:
                     with st.spinner("Processing..."):
                         current_output = user_input
+                        st.session_state.generated_files = []
                         for node_id in nx.topological_sort(st.session_state.workflow):
                             node = st.session_state.workflow.nodes[node_id]['node']
                             
@@ -206,6 +240,8 @@ def main():
                                         st.image(current_output, caption=f"Output from {node.name}", use_column_width=True)
                                 else:
                                     st.write(current_output)
+                                
+                                st.session_state.generated_files.append(current_output)
                         
                         st.success("Pipeline execution completed!")
                 elif not st.session_state.api_key:
@@ -216,6 +252,30 @@ def main():
             st.warning("Your workflow has no starting point. Please connect your nodes.")
     else:
         st.warning("Please add at least one node to the workflow.")
+
+    # Download button for generated files
+    if st.session_state.generated_files:
+        st.subheader("Download Generated Files")
+        download_link = create_download_zip(st.session_state.generated_files)
+        st.markdown(download_link, unsafe_allow_html=True)
+
+    # Display previously generated files
+    if st.session_state.generated_files:
+        st.subheader("Previously Generated Files")
+        for i, file in enumerate(st.session_state.generated_files):
+            if isinstance(file, Image.Image):
+                st.image(file, caption=f"Generated Image {i+1}", use_column_width=True)
+            elif isinstance(file, str) and file.startswith("http"):
+                if file.endswith((".png", ".jpg", ".jpeg")):
+                    st.image(file, caption=f"Generated Image {i+1}", use_column_width=True)
+                elif file.endswith(".mp4"):
+                    st.video(file)
+                elif file.endswith((".mp3", ".wav")):
+                    st.audio(file)
+                else:
+                    st.write(f"Generated File {i+1}: {file}")
+            else:
+                st.write(f"Generated Output {i+1}: {file}")
 
 if __name__ == "__main__":
     main()
