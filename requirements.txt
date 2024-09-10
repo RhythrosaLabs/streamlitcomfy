@@ -2,3 +2,4 @@ streamlit
 streamlit-elements
 replicate
 requests
+streamlit-lottie
