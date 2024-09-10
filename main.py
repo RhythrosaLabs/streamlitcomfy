@@ -15,13 +15,12 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class AINode:
-    def __init__(self, id, name, model_id, input_type, output_type, params):
+    def __init__(self, id, name, model_id, input_type, output_type):
         self.id = id
         self.name = name
         self.model_id = model_id
         self.input_type = input_type
         self.output_type = output_type
-        self.params = params
 
 def verify_api_key(api_key):
     try:
@@ -58,8 +57,8 @@ def process_replicate(node, input_data, **kwargs):
         else:
             raise ValueError(f"Unsupported input type: {node.input_type}")
         
-        model_input.update(kwargs)  # Add the model parameters
-
+        model_input.update(kwargs)
+        
         logger.info(f"Model input: {model_input}")
         
         client = replicate.Client(api_token=st.session_state.api_key)
@@ -110,15 +109,6 @@ def create_download_zip(files):
     os.remove(zip_filename)
     return href
 
-# Parameter settings for each model
-model_params = {
-    "sdxl": ["prompt", "negative_prompt", "width", "height", "num_outputs", "scheduler", "guidance_scale"],
-    "video": ["prompt", "negative_prompt", "num_frames", "width", "height", "guidance_scale", "fps", "model"],
-    "upscale": ["image", "width", "height"],
-    "remove-bg": ["image"],
-    # Add more models as needed
-}
-
 def main():
     st.set_page_config(page_title="Replicate AI Pipeline Builder", layout="wide")
     
@@ -140,11 +130,16 @@ def main():
             st.sidebar.error("Invalid API key. Please check and try again.")
 
     available_nodes = [
-        AINode("flux", "Flux Schnell", "black-forest-labs/flux-schnell", "text", "image", model_params["sdxl"]),
-        AINode("sdxl", "Stable Diffusion XL", "stability-ai/sdxl:a00d0b7dcbb9c3fbb34ba87d2d5b46c56969c84a628bf778a7fdaec30b1b99c5", "text", "image", model_params["sdxl"]),
-        AINode("video", "Video Generation", "anotherjesse/zeroscope-v2-xl:9f747673945c62801b13b84701c783929c0ee784e4748ec062204894dda1a351", "text", "video", model_params["video"]),
-        AINode("upscale", "Image Upscaling", "nightmareai/real-esrgan:42fed1c4974146d4d2414e2be2c5277c7fcf05fcc3a73abf41610695738c1d7b", "image", "image", model_params["upscale"]),
-        AINode("remove-bg", "Remove Background", "cjwbw/rembg:fb8af171cfa1616ddcf1242c093f9c46bcada5ad4cf6f2fbe8b81b330ec5c003", "image", "image", model_params["remove-bg"]),
+        AINode("flux", "Flux Schnell", "black-forest-labs/flux-schnell", "text", "image"),
+        AINode("sdxl", "Stable Diffusion XL", "stability-ai/sdxl:a00d0b7dcbb9c3fbb34ba87d2d5b46c56969c84a628bf778a7fdaec30b1b99c5", "text", "image"),
+        AINode("video", "Video Generation", "anotherjesse/zeroscope-v2-xl:9f747673945c62801b13b84701c783929c0ee784e4748ec062204894dda1a351", "text", "video"),
+        AINode("upscale", "Image Upscaling", "nightmareai/real-esrgan:42fed1c4974146d4d2414e2be2c5277c7fcf05fcc3a73abf41610695738c1d7b", "image", "image"),
+        AINode("clip", "CLIP Image Interrogator", "andreasjansson/clip-interrogator:a4a8bafd6089e1716b06057c42b19378250d008b80fe87caa5cd36d40c1eda90", "image", "text"),
+        AINode("controlnet", "ControlNet", "jagilley/controlnet-canny:aff48af9c68d162388d230a2ab003f68d2638d88307bdaf1c2f1ac95079c9613", "image", "image"),
+        AINode("instruct-pix2pix", "InstructPix2Pix", "timothybrooks/instruct-pix2pix:30c1d0b916a6f8efce20493f5d61ee27491ab2a60437c13c588468b9810ec23f", "image", "image"),
+        AINode("remove-bg", "Remove Background", "cjwbw/rembg:fb8af171cfa1616ddcf1242c093f9c46bcada5ad4cf6f2fbe8b81b330ec5c003", "image", "image"),
+        AINode("llama", "LLaMA 13B", "replicate/llama-2-13b-chat:f4e2de70d66816a838a89eeeb621910adffb0dd0baba3976c96980970978018d", "text", "text"),
+        AINode("music-gen", "MusicGen", "meta/musicgen:7a76a8258b23fae65c5a22debb8841d1d7e816b75c2f24218cd2bd8573787906", "text", "audio"),
     ]
 
     if 'workflow' not in st.session_state:
@@ -159,15 +154,13 @@ def main():
         
         with st.expander("Add Node", expanded=True):
             selected_node = st.selectbox("Select a node to add", available_nodes, format_func=lambda x: x.name)
-            node_name = st.text_input("Enter a custom name for this node", value=selected_node.name)
-            
             if st.button("Add Node", key="add_node"):
-                if node_name not in st.session_state.workflow.nodes:
-                    st.session_state.workflow.add_node(node_name, node=selected_node)
-                    st.session_state.node_positions[node_name] = (len(st.session_state.workflow.nodes) * 100, 0)
-                    st.success(f"Added {node_name} to the workflow.")
+                if selected_node.id not in st.session_state.workflow.nodes:
+                    st.session_state.workflow.add_node(selected_node.id, node=selected_node)
+                    st.session_state.node_positions[selected_node.id] = (len(st.session_state.workflow.nodes) * 100, 0)
+                    st.success(f"Added {selected_node.name} to the workflow.")
                 else:
-                    st.warning(f"{node_name} is already in the workflow.")
+                    st.warning(f"{selected_node.name} is already in the workflow.")
 
         if len(st.session_state.workflow.nodes) > 1:
             with st.expander("Connect Nodes", expanded=True):
@@ -183,10 +176,7 @@ def main():
         with st.expander("Remove Node or Connection", expanded=True):
             remove_type = st.radio("Select what to remove:", ["Node", "Connection"])
             if remove_type == "Node":
-                node_to_remove = st.selectbox("Select node to remove", list(st.session_state.workflow.nodes), format_func=lambda x: st.session_state.workflow.nodes[x]['node'].Here’s the rest of the Streamlit app code, incorporating the model parameter customization and node naming:
-
-```python
-.name)
+                node_to_remove = st.selectbox("Select node to remove", list(st.session_state.workflow.nodes), format_func=lambda x: st.session_state.workflow.nodes[x]['node'].name)
                 if st.button("Remove Node", key="remove_node"):
                     st.session_state.workflow.remove_node(node_to_remove)
                     del st.session_state.node_positions[node_to_remove]
@@ -228,19 +218,6 @@ def main():
                 if user_input:
                     user_input = Image.open(user_input)
 
-            # Collect additional parameters for the node based on its available params
-            node_params = {}
-            selected_node = st.session_state.workflow.nodes[start_node]['node']
-            for param in selected_node.params:
-                if param == "prompt":
-                    node_params["prompt"] = st.text_input(f"Enter {param}:")
-                elif param == "width" or param == "height":
-                    node_params[param] = st.number_input(f"Enter {param}:", min_value=256, max_value=2048, step=64, value=1024)
-                elif param == "guidance_scale":
-                    node_params[param] = st.slider(f"Set {param}:", min_value=1.0, max_value=50.0, value=7.5)
-                else:
-                    node_params[param] = st.text_input(f"Enter {param} (optional):")
-
             if st.button("Run Pipeline", key="run_pipeline"):
                 if user_input and st.session_state.api_key:
                     with st.spinner("Processing..."):
@@ -251,7 +228,7 @@ def main():
                             
                             with st.expander(f"Processing: {node.name}", expanded=True):
                                 st.info(f"Processing node: {node.name}")
-                                current_output = process_replicate(node, current_output, **node_params)
+                                current_output = process_replicate(node, current_output)
                                 
                                 if current_output is None:
                                     st.error(f"Processing failed at node: {node.name}")
