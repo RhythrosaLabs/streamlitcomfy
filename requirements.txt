@@ -4,4 +4,3 @@ requests
 Pillow
 networkx
 streamlit-agraph
-streamlit_draggable
