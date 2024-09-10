@@ -1,7 +1,6 @@
 streamlit
-diffusers
-torch
-torchvision
-torchaudio
 streamlit-elements
+torch
+diffusers
 transformers
+Pillow
