@@ -1,2 +1,3 @@
 streamlit-drag-and-drop
 replicate
+requests
