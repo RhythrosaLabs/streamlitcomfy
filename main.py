@@ -1,7 +1,6 @@
 import streamlit as st
 from streamlit_elements import elements, mui, html
 import replicate
-import openai
 import requests
 
 # Define each node type, API, and their processing logic
