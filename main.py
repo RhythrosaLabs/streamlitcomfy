@@ -5,7 +5,6 @@ from PIL import Image
 import io
 import networkx as nx
 from streamlit_agraph import agraph, Node, Edge, Config
-import os
 
 class AINode:
     def __init__(self, id, name, model_id, input_type, output_type):
@@ -20,10 +19,11 @@ def download_image(url):
     response.raise_for_status()
     return Image.open(io.BytesIO(response.content))
 
-def process_replicate(node, input_data, api_key, **kwargs):
+def process_replicate(node, input_data, **kwargs):
     try:
-        # Set the API key in the environment variable
-        os.environ["REPLICATE_API_TOKEN"] = api_key
+        if not st.session_state.api_key:
+            st.error("API key is missing. Please enter your Replicate API key in the sidebar.")
+            return None
 
         if node.input_type == "text":
             model_input = {"prompt": input_data}
@@ -48,8 +48,8 @@ def process_replicate(node, input_data, api_key, **kwargs):
         
         model_input.update(kwargs)
         
-        # Use replicate.run with the model_id and input
-        output = replicate.run(node.model_id, input=model_input)
+        # Use replicate.run with the model_id, input, and API key
+        output = replicate.run(node.model_id, input=model_input, api_token=st.session_state.api_key)
         
         if isinstance(output, list) and len(output) > 0:
             return output[0] if isinstance(output[0], str) and output[0].startswith("http") else output[0]
@@ -72,11 +72,12 @@ def main():
     st.sidebar.header("Settings")
 
     # API key input
-    api_key = st.sidebar.text_input("Replicate API Key", type="password")
-
-    # Set the API key in the environment variable
+    if 'api_key' not in st.session_state:
+        st.session_state.api_key = ""
+    
+    api_key = st.sidebar.text_input("Replicate API Key", type="password", value=st.session_state.api_key)
     if api_key:
-        os.environ["REPLICATE_API_TOKEN"] = api_key
+        st.session_state.api_key = api_key
 
     # Available AI nodes
     available_nodes = [
@@ -163,7 +164,7 @@ def main():
                     user_input = Image.open(user_input)
 
             if st.button("Run Pipeline", key="run_pipeline"):
-                if user_input and api_key:
+                if user_input and st.session_state.api_key:
                     with st.spinner("Processing..."):
                         current_output = user_input
                         for node_id in nx.topological_sort(st.session_state.workflow):
@@ -172,13 +173,13 @@ def main():
                             with st.expander(f"Processing: {node.name}", expanded=True):
                                 st.info(f"Processing node: {node.name}")
                                 if node.id == "flux":
-                                    current_output = process_replicate(node, current_output, api_key, 
+                                    current_output = process_replicate(node, current_output, 
                                                                        num_outputs=1, 
                                                                        aspect_ratio="1:1", 
                                                                        output_format="webp", 
                                                                        output_quality=80)
                                 else:
-                                    current_output = process_replicate(node, current_output, api_key)
+                                    current_output = process_replicate(node, current_output)
                                 
                                 if current_output is None:
                                     st.error(f"Processing failed at node: {node.name}")
@@ -193,7 +194,7 @@ def main():
                                     st.write(current_output)
                         
                         st.success("Pipeline execution completed!")
-                elif not api_key:
+                elif not st.session_state.api_key:
                     st.warning("Please enter your Replicate API key in the sidebar.")
                 else:
                     st.warning("Please provide input.")
