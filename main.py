@@ -1,18 +1,28 @@
 import streamlit as st
 import replicate
 
-# Initialize session state for nodes and outputs
+# Initialize session state for nodes, outputs, and API key
 if "nodes" not in st.session_state:
     st.session_state["nodes"] = []
 
 if "outputs" not in st.session_state:
     st.session_state["outputs"] = {}
 
-# Input for the API Key
-api_key = st.text_input("Enter your Replicate API Key", type="password")
+if "api_key" not in st.session_state:
+    st.session_state["api_key"] = None
 
-# Ensure the API key is provided
-if api_key:
+# Input for the API Key
+api_key_input = st.text_input("Enter your Replicate API Key", type="password")
+
+# Save the API key to session state when entered
+if api_key_input:
+    st.session_state["api_key"] = api_key_input
+
+# Check if the API key is set in session state
+if st.session_state["api_key"]:
+    api_key = st.session_state["api_key"]
+    client = replicate.Client(api_token=api_key)
+
     # List of available models and their parameters
     available_models = {
         "LLaMA 70b (Text Generation)": {
@@ -89,7 +99,7 @@ if api_key:
                 output = replicate.run(
                     f"{model_id}:latest",
                     input=st.session_state["nodes"][i]["params"],
-                    api_token=api_key  # Explicitly passing the API key
+                    api_token=st.session_state["api_key"]  # Explicitly passing the API key
                 )
                 st.session_state["nodes"][i]["output"] = output
                 st.session_state["outputs"][f"Node_{i+1}_output"] = output
@@ -108,3 +118,5 @@ if api_key:
             elif isinstance(st.session_state["outputs"][f"Node_{i+1}_output"], bytes):  # For image models
                 next_node["params"]["image"] = st.session_state["outputs"][f"Node_{i+1}_output"]
 
+else:
+    st.warning("Please enter your Replicate API key to proceed.")
