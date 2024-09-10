@@ -31,6 +31,35 @@ def verify_api_key(api_key):
         logger.error(f"API key verification failed: {str(e)}")
         return False
 
+def verify_sd_api_key(sd_api_key):
+    try:
+        response = requests.get("https://api.stable-diffusion.com/status", headers={"Authorization": f"Bearer {sd_api_key}"})
+        return response.status_code == 200
+    except Exception as e:
+        logger.error(f"Stable Diffusion API key verification failed: {str(e)}")
+        return False
+
+def process_sd_image_to_video(api_key, prompt, num_frames=10, frame_rate=5):
+    try:
+        url = "https://api.stable-diffusion.com/image-to-video"
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        data = {
+            "prompt": prompt,
+            "num_frames": num_frames,
+            "frame_rate": frame_rate
+        }
+        response = requests.post(url, json=data, headers=headers)
+        response.raise_for_status()
+        video_url = response.json().get("video_url")
+        return video_url
+    except Exception as e:
+        logger.error(f"Stable Diffusion API Error: {str(e)}")
+        st.error(f"Stable Diffusion API Error: {str(e)}")
+        return None
+
 def process_replicate(node, input_data, **kwargs):
     try:
         if not st.session_state.api_key:
@@ -118,21 +147,33 @@ def main():
     if 'api_key' not in st.session_state:
         st.session_state.api_key = ""
     
+    if 'sd_api_key' not in st.session_state:
+        st.session_state.sd_api_key = ""
+    
     if 'generated_files' not in st.session_state:
         st.session_state.generated_files = []
     
     api_key = st.sidebar.text_input("Replicate API Key", type="password", value=st.session_state.api_key)
+    sd_api_key = st.sidebar.text_input("Stable Diffusion API Key", type="password", value=st.session_state.sd_api_key)
+
     if api_key:
         st.session_state.api_key = api_key
         if verify_api_key(api_key):
-            st.sidebar.success("API key verified successfully!")
+            st.sidebar.success("Replicate API key verified successfully!")
         else:
-            st.sidebar.error("Invalid API key. Please check and try again.")
+            st.sidebar.error("Invalid Replicate API key. Please check and try again.")
+
+    if sd_api_key:
+        st.session_state.sd_api_key = sd_api_key
+        if verify_sd_api_key(sd_api_key):
+            st.sidebar.success("Stable Diffusion API key verified successfully!")
+        else:
+            st.sidebar.error("Invalid Stable Diffusion API key. Please check and try again.")
 
     available_nodes = [
         AINode("flux", "Flux Schnell", "black-forest-labs/flux-schnell", "text", "image"),
         AINode("sdxl", "Stable Diffusion XL", "stability-ai/sdxl:a00d0b7dcbb9c3fbb34ba87d2d5b46c56969c84a628bf778a7fdaec30b1b99c5", "text", "image"),
-        AINode("video", "Video Generation", "camenduru/dynami-crafter-576x1024:e79ff8d01e81cbd90acfa1df4f209f637da2c68307891d77a6e4227f4ec350f1", "text", "video"),
+        AINode("video", "Stable Diffusion Image-to-Video", "custom-stable-diffusion-video", "text", "video"),  # Custom node
         AINode("upscale", "Image Upscaling", "nightmareai/real-esrgan:42fed1c4974146d4d2414e2be2c5277c7fcf05fcc3a73abf41610695738c1d7b", "image", "image"),
         AINode("clip", "CLIP Image Interrogator", "andreasjansson/clip-interrogator:a4a8bafd6089e1716b06057c42b19378250d008b80fe87caa5cd36d40c1eda90", "image", "text"),
         AINode("controlnet", "ControlNet", "jagilley/controlnet-canny:aff48af9c68d162388d230a2ab003f68d2638d88307bdaf1c2f1ac95079c9613", "image", "image"),
@@ -219,7 +260,7 @@ def main():
                     user_input = Image.open(user_input)
 
             if st.button("Run Pipeline", key="run_pipeline"):
-                if user_input and st.session_state.api_key:
+                if user_input and (st.session_state.api_key or st.session_state.sd_api_key):
                     with st.spinner("Processing..."):
                         current_output = user_input
                         st.session_state.generated_files = []
@@ -228,7 +269,11 @@ def main():
                             
                             with st.expander(f"Processing: {node.name}", expanded=True):
                                 st.info(f"Processing node: {node.name}")
-                                current_output = process_replicate(node, current_output)
+                                if node.model_id == "custom-stable-diffusion-video":
+                                    # Use Stable Diffusion Image to Video API
+                                    current_output = process_sd_image_to_video(st.session_state.sd_api_key, current_output)
+                                else:
+                                    current_output = process_replicate(node, current_output)
                                 
                                 if current_output is None:
                                     st.error(f"Processing failed at node: {node.name}")
@@ -250,8 +295,8 @@ def main():
                                 st.session_state.generated_files.append(current_output)
                         
                         st.success("Pipeline execution completed!")
-                elif not st.session_state.api_key:
-                    st.warning("Please enter your Replicate API key in the sidebar.")
+                elif not (st.session_state.api_key or st.session_state.sd_api_key):
+                    st.warning("Please enter your API keys in the sidebar.")
                 else:
                     st.warning("Please provide input.")
         else:
