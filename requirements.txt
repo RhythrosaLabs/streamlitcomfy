@@ -2,3 +2,4 @@ streamlit
 pillow
 requests
 replicate
+streamlit-elements
