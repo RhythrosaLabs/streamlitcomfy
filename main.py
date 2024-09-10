@@ -30,23 +30,25 @@ def process_replicate(node, input_data, api_key, **kwargs):
             model_input = {"prompt": input_data}
         elif node.input_type == "image":
             if isinstance(input_data, Image.Image):
-                # Save the PIL Image to a temporary file and get its URL
-                img_byte_arr = io.BytesIO()
-                input_data.save(img_byte_arr, format='PNG')
-                img_byte_arr = img_byte_arr.getvalue()
-                
-                # Use Streamlit's file uploader to create a temporary URL
-                temp_file = st.file_uploader("Temporary file (don't change this)", type=["png"], key="temp_file")
-                if temp_file is None:
-                    st.session_state.temp_file = img_byte_arr
-                    st.experimental_rerun()
-                
-                model_input = {"image": temp_file}
+                # Convert PIL Image to base64
+                buffered = io.BytesIO()
+                input_data.save(buffered, format="PNG")
+                img_str = base64.b64encode(buffered.getvalue()).decode()
+                model_input = {"image": img_str}
             elif isinstance(input_data, str) and input_data.startswith("http"):
-                # If input_data is already a URL, use it directly
-                model_input = {"image": input_data}
+                # If input_data is a URL, download the image and convert to base64
+                response = requests.get(input_data)
+                img = Image.open(io.BytesIO(response.content))
+                buffered = io.BytesIO()
+                img.save(buffered, format="PNG")
+                img_str = base64.b64encode(buffered.getvalue()).decode()
+                model_input = {"image": img_str}
+            elif isinstance(input_data, bytes):
+                # If input_data is already bytes, encode it to base64
+                img_str = base64.b64encode(input_data).decode()
+                model_input = {"image": img_str}
             else:
-                raise ValueError(f"Unsupported image input type: {type(input_data)}")
+                model_input = {"image": input_data}
         else:
             raise ValueError(f"Unsupported input type: {node.input_type}")
         
@@ -59,13 +61,13 @@ def process_replicate(node, input_data, api_key, **kwargs):
         # Handle different types of output
         if isinstance(output, list) and len(output) > 0:
             if isinstance(output[0], str) and output[0].startswith("http"):
-                # If the output is a list with a URL, return the URL
-                return output[0]
+                # If the output is a list with a URL, download the image
+                return download_image(output[0])
             else:
                 return output[0]  # Return the first element of the list
         elif isinstance(output, str) and output.startswith("http"):
-            # If the output is a URL, return it
-            return output
+            # If the output is a URL, download the image
+            return download_image(output)
         else:
             return output
     except replicate.exceptions.ReplicateError as e:
