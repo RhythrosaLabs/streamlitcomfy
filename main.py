@@ -11,9 +11,8 @@ if "outputs" not in st.session_state:
 # Input for the API Key
 api_key = st.text_input("Enter your Replicate API Key", type="password")
 
+# Ensure the API key is provided
 if api_key:
-    client = replicate.Client(api_token=api_key)
-
     # List of available models and their parameters
     available_models = {
         "LLaMA 70b (Text Generation)": {
@@ -83,13 +82,14 @@ if api_key:
             st.session_state["nodes"].pop(i)
             st.experimental_rerun()
 
-        # Run model and get output using replicate.run
+        # Run model and get output using replicate.run, explicitly passing the API key
         if st.button(f"Run Node {i + 1}"):
             try:
                 model_id = model_info["id"]
                 output = replicate.run(
                     f"{model_id}:latest",
-                    input=st.session_state["nodes"][i]["params"]
+                    input=st.session_state["nodes"][i]["params"],
+                    api_token=api_key  # Explicitly passing the API key
                 )
                 st.session_state["nodes"][i]["output"] = output
                 st.session_state["outputs"][f"Node_{i+1}_output"] = output
