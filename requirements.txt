@@ -3,3 +3,4 @@ diffusers
 torch
 torchvision
 torchaudio
+streamlit-elements
