@@ -6,10 +6,10 @@ import torch
 # Initialize models dictionary to store nodes' models
 models = {}
 
-# Function to load models dynamically
+# Function to load models dynamically, running on CPU to avoid high memory usage
 @st.cache_resource(show_spinner=False)
 def load_model(model_choice):
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = "cpu"  # Using CPU for stability in low-resource environments
     if model_choice == "SD 1.x":
         return StableDiffusionPipeline.from_pretrained("CompVis/stable-diffusion-v1-4").to(device)
     elif model_choice == "SD 2.x":
@@ -20,6 +20,12 @@ def load_model(model_choice):
 # Sidebar for task and model selection
 task = st.sidebar.selectbox("Select Task", ["Text to Image"])
 model_selection = st.sidebar.selectbox("Select Model", ["SD 1.x", "SD 2.x", "SDXL"])
+
+# Image resolution sliders (reduced default resolution)
+height = st.sidebar.slider("Image Height", 128, 512, 256)
+width = st.sidebar.slider("Image Width", 128, 512, 256)
+steps = st.sidebar.slider("Steps", 10, 50, 25)
+guidance_scale = st.sidebar.slider("CFG Scale", 1.0, 20.0, 7.5)
 
 # Dashboard layout settings for draggable nodes
 layout = [
@@ -41,17 +47,19 @@ with elements("dashboard"):
             if st.button("Generate from Node 1"):
                 if "node1" in models:
                     pipe = models["node1"]
-                    image = pipe(prompt, num_inference_steps=50, guidance_scale=7.5).images[0]
-                    st.image(image, caption="Generated Image from Node 1")
+                    with st.spinner("Generating image..."):
+                        image = pipe(prompt, num_inference_steps=steps, guidance_scale=guidance_scale, height=height, width=width).images[0]
+                        st.image(image, caption="Generated Image from Node 1")
                 else:
                     st.warning("Node 1 is not connected or assigned a model.")
 
-# Generate button for entire pipeline
+# Generate button for the entire pipeline
 if st.sidebar.button("Generate Entire Pipeline"):
     if "node1" in models:
         pipe = models["node1"]
         st.sidebar.write("Generating image from Node 1...")
-        image = pipe(prompt, num_inference_steps=50, guidance_scale=7.5).images[0]
-        st.sidebar.image(image, caption="Generated Image")
+        with st.spinner("Generating image..."):
+            image = pipe(prompt, num_inference_steps=steps, guidance_scale=guidance_scale, height=height, width=width).images[0]
+            st.sidebar.image(image, caption="Generated Image")
     else:
         st.sidebar.error("No model assigned to Node 1")
