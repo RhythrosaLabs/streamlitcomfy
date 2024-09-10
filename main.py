@@ -17,15 +17,15 @@ if api_key:
     # List of available models and their parameters
     available_models = {
         "LLaMA 70b (Text Generation)": {
-            "id": "replicate/llama-70b",
+            "id": "replicate/llama-70b",  # Double check this model name
             "params": ["prompt", "max_length", "temperature"]
         },
         "Flux Pro (Art Generation)": {
-            "id": "black-forest-labs/flux-pro",
+            "id": "black-forest-labs/flux-pro",  # Double check this model name
             "params": ["prompt", "style", "guidance_scale"]
         },
         "Image Upscaler": {
-            "id": "stability-ai/stable-diffusion-x4-upscaler",
+            "id": "stability-ai/stable-diffusion-x4-upscaler",  # Confirm this slug exists
             "params": ["image", "upscale_factor"]
         }
     }
@@ -83,11 +83,14 @@ if api_key:
             st.session_state["nodes"].pop(i)
             st.experimental_rerun()
 
-        # Run model and get output
+        # Run model and get output using replicate.run
         if st.button(f"Run Node {i + 1}"):
             try:
-                model = client.models.get(model_info["id"])
-                output = model.predict(**st.session_state["nodes"][i]["params"])
+                model_id = model_info["id"]
+                output = replicate.run(
+                    f"{model_id}:latest",
+                    input=st.session_state["nodes"][i]["params"]
+                )
                 st.session_state["nodes"][i]["output"] = output
                 st.session_state["outputs"][f"Node_{i+1}_output"] = output
                 st.write(f"Output for Node {i + 1}: {output}")
