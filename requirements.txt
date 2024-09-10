@@ -2,3 +2,4 @@ replicate
 requests
 streamlit
 streamlit-elements
+streamlit-drag-and-drop
