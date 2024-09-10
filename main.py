@@ -1,118 +1,117 @@
-import streamlit as st
+# app.py
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import List, Dict, Any
 import replicate
+import requests
+import base64
+from PIL import Image
+import io
 
-# Initialize session state for nodes and API key
-if "nodes" not in st.session_state:
-    st.session_state["nodes"] = []
+app = FastAPI()
 
-if "api_key" not in st.session_state:
-    st.session_state["api_key"] = None
+class AINode(BaseModel):
+    name: str
+    api_type: str
+    model_id: str
+    input_type: str
+    output_type: str
 
-# Function to validate API key by running a basic test model
-def validate_api_key(api_key):
-    try:
-        replicate.run(
-            "stability-ai/stable-diffusion:latest",
-            input={"prompt": "A beautiful sunset over the mountains"},
-            api_token=api_key
-        )
-        return True
-    except Exception as e:
-        return False, str(e)
+class AIRequest(BaseModel):
+    nodes: List[AINode]
+    input_data: Any
+    api_keys: Dict[str, str]
 
-# Function to run the models based on node configuration
-def run_model(node, api_key):
-    model_id = node["model_id"]
-    params = node["params"]
-    try:
-        output = replicate.run(
-            f"{model_id}:latest",
-            input=params,
-            api_token=api_key
-        )
-        return output
-    except Exception as e:
-        return f"Error: {e}"
+def process_replicate(node: AINode, input_data: Any, api_key: str, **kwargs):
+    client = replicate.Client(api_token=api_key)
+    output = client.run(node.model_id, input={"image": input_data, **kwargs})
+    return output
 
-# Input for API Key and validation
-api_key_input = st.text_input("Enter your Replicate API Key", type="password")
-if st.button("Save and Validate API Key"):
-    if api_key_input:
-        api_key_input = api_key_input.strip()  # Remove any extra spaces
-        valid, error = validate_api_key(api_key_input)
-        if valid:
-            st.session_state["api_key"] = api_key_input
-            st.success("API Key is valid and saved!")
-        else:
-            st.error(f"API Key validation failed: {error}")
+def process_stability(node: AINode, input_data: str, api_key: str, **kwargs):
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "text_prompts": [{"text": input_data}],
+        **kwargs
+    }
+    response = requests.post(f"https://api.stability.ai/v1/generation/{node.model_id}/text-to-image", headers=headers, json=payload)
+    if response.status_code == 200:
+        data = response.json()
+        image_data = base64.b64decode(data['artifacts'][0]['base64'])
+        return Image.open(io.BytesIO(image_data))
     else:
-        st.warning("Please enter a valid API key.")
+        raise HTTPException(status_code=response.status_code, detail=response.text)
 
-# Check if API key is set
-if st.session_state["api_key"]:
-    api_key = st.session_state["api_key"]
+@app.post("/process")
+async def process_pipeline(request: AIRequest):
+    current_output = request.input_data
+    for node in request.nodes:
+        api_key = request.api_keys.get(node.api_type)
+        if not api_key:
+            raise HTTPException(status_code=400, detail=f"API key missing for {node.api_type}")
+        
+        if node.api_type == "replicate":
+            current_output = process_replicate(node, current_output, api_key)
+        elif node.api_type == "stability":
+            current_output = process_stability(node, current_output, api_key)
+        else:
+            raise HTTPException(status_code=400, detail=f"Unsupported API type: {node.api_type}")
+    
+    return {"result": current_output}
 
-    # Add new node button
-    if st.button("Add New Node"):
-        st.session_state["nodes"].append({
-            "model_id": "stability-ai/stable-diffusion",  # Default model
-            "params": {"prompt": "default prompt"}
-        })
+# Streamlit frontend
+import streamlit as st
+import requests
 
-    # Display and configure nodes
-    for i, node in enumerate(st.session_state["nodes"]):
-        st.write(f"### Node {i + 1}")
+st.title("Multi-Modal AI Pipeline")
 
-        # Select model
-        model_id = st.selectbox(
-            f"Choose Model for Node {i + 1}",
-            ["stability-ai/stable-diffusion", "replicate/llama-70b", "black-forest-labs/flux-pro"],
-            key=f"model_id_{i}"
-        )
-        st.session_state["nodes"][i]["model_id"] = model_id
+# API key inputs
+api_keys = {
+    "replicate": st.sidebar.text_input("Replicate API Key", type="password"),
+    "stability": st.sidebar.text_input("Stability AI API Key", type="password"),
+}
 
-        # Input parameters based on model type
-        if model_id == "stability-ai/stable-diffusion":
-            prompt = st.text_area(f"Prompt for Node {i + 1}", key=f"prompt_{i}")
-            st.session_state["nodes"][i]["params"] = {"prompt": prompt}
+# Available AI nodes
+available_nodes = [
+    AINode(name="Stable Diffusion", api_type="replicate", model_id="stability-ai/stable-diffusion:db21e45d3f7023abc2a46ee38a23973f6dce16bb082a930b0c49861f96d1e5bf", input_type="text", output_type="image"),
+    AINode(name="DALL-E 3", api_type="stability", model_id="stable-diffusion-xl-1024-v1-0", input_type="text", output_type="image"),
+    AINode(name="Video Generation", api_type="replicate", model_id="anotherjesse/zeroscope-v2-xl:9f747673945c62801b13b84701c783929c0ee784e4748ec062204894dda1a351", input_type="text", output_type="video"),
+    AINode(name="Image Upscaling", api_type="replicate", model_id="nightmareai/real-esrgan:42fed1c4974146d4d2414e2be2c5277c7fcf05fcc3a73abf41610695738c1d7b", input_type="image", output_type="image"),
+]
 
-        elif model_id == "replicate/llama-70b":
-            prompt = st.text_area(f"Text Prompt for Node {i + 1}", key=f"llama_prompt_{i}")
-            max_length = st.slider(f"Max Length for Node {i + 1}", 50, 500, 150, key=f"max_length_{i}")
-            temperature = st.slider(f"Temperature for Node {i + 1}", 0.0, 1.0, 0.75, key=f"temperature_{i}")
-            st.session_state["nodes"][i]["params"] = {
-                "prompt": prompt,
-                "max_length": max_length,
-                "temperature": temperature
-            }
+# Pipeline creation
+selected_nodes = st.multiselect("Select AI nodes for your pipeline", available_nodes, format_func=lambda x: x.name)
 
-        elif model_id == "black-forest-labs/flux-pro":
-            prompt = st.text_area(f"Art Prompt for Node {i + 1}", key=f"flux_prompt_{i}")
-            style = st.selectbox(f"Style for Node {i + 1}", ["abstract", "cyberpunk", "fantasy", "realistic"], key=f"style_{i}")
-            guidance_scale = st.slider(f"Guidance Scale for Node {i + 1}", 0.5, 20.0, 7.5, key=f"guidance_scale_{i}")
-            st.session_state["nodes"][i]["params"] = {
-                "prompt": prompt,
-                "style": style,
-                "guidance_scale": guidance_scale
-            }
+# Input
+input_type = selected_nodes[0].input_type if selected_nodes else "text"
+if input_type == "text":
+    user_input = st.text_area("Enter your prompt:")
+elif input_type == "image":
+    user_input = st.file_uploader("Upload an image:", type=["png", "jpg", "jpeg"])
+    if user_input:
+        user_input = Image.open(user_input)
 
-        # Button to remove node
-        if st.button(f"Remove Node {i + 1}"):
-            st.session_state["nodes"].pop(i)
-            st.experimental_rerun()
+# Run pipeline
+if st.button("Run Pipeline"):
+    if user_input and selected_nodes:
+        with st.spinner("Processing..."):
+            request_data = AIRequest(nodes=selected_nodes, input_data=user_input, api_keys=api_keys)
+            response = requests.post("http://localhost:8000/process", json=request_data.dict())
+            if response.status_code == 200:
+                output = response.json()["result"]
+                if isinstance(output, dict) and "image" in output:
+                    st.image(output["image"], caption="Generated Image", use_column_width=True)
+                elif isinstance(output, str) and output.startswith("http"):
+                    st.video(output)
+                else:
+                    st.write(output)
+            else:
+                st.error(f"Error: {response.status_code}, {response.text}")
+    else:
+        st.warning("Please provide input and select at least one node.")
 
-        # Run the model and display output
-        if st.button(f"Run Node {i + 1}"):
-            result = run_model(st.session_state["nodes"][i], api_key)
-            st.write(f"Output for Node {i + 1}: {result}")
-
-    # Chain outputs between nodes
-    if len(st.session_state["nodes"]) > 1:
-        st.write("### Chaining Outputs Between Nodes")
-        for i in range(len(st.session_state["nodes"]) - 1):
-            if "output" in st.session_state["nodes"][i]:
-                st.session_state["nodes"][i + 1]["params"]["prompt"] = st.session_state["nodes"][i]["output"]
-                st.write(f"Passing output from Node {i + 1} to Node {i + 2}")
-
-else:
-    st.warning("Please enter your Replicate API key and click 'Save and Validate API Key' to proceed.")
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
