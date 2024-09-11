@@ -146,6 +146,22 @@ def update_node_properties(node_id, properties):
         else:
             setattr(node, key, value)
 
+def display_node_properties_in_sidebar(node):
+    st.sidebar.subheader(f"Node: {node.name} Properties")
+
+    # Dynamically update the sidebar based on node type
+    for param, value in node.params.items():
+        if isinstance(value, str):
+            node.params[param] = st.sidebar.text_input(param, value)
+        elif isinstance(value, (int, float)):
+            node.params[param] = st.sidebar.number_input(param, value=value)
+        elif isinstance(value, bool):
+            node.params[param] = st.sidebar.checkbox(param, value)
+        elif isinstance(value, Image.Image):
+            uploaded_file = st.sidebar.file_uploader(f"Upload {param}", type=["png", "jpg", "jpeg"])
+            if uploaded_file:
+                node.params[param] = Image.open(uploaded_file)
+
 def main():
     st.set_page_config(page_title="Advanced Interactive AI Pipeline Builder", layout="wide")
     
@@ -226,6 +242,8 @@ def main():
                 update_node_position(return_value['id'], return_value['x'], return_value['y'])
             elif return_value['type'] == 'select_node':
                 st.session_state.selected_node = return_value['id']
+                selected_node = st.session_state.workflow.nodes[st.session_state.selected_node]['node']
+                display_node_properties_in_sidebar(selected_node)
             elif return_value['type'] == 'add_edge':
                 edge_type = st.selectbox("Select edge type", ["data", "control"])
                 create_edge(return_value['source'], return_value['target'], edge_type)
@@ -238,7 +256,7 @@ def main():
             node = st.session_state.workflow.nodes[st.session_state.selected_node]['node']
             st.write(f"Editing: {node.name}")
             
-            # Display and edit node properties
+            # Display and edit node properties in the main area
             new_properties = {}
             for attr in ['input_type', 'output_type', 'model_id']:
                 new_value = st.text_input(attr, getattr(node, attr))
