@@ -37,7 +37,7 @@ def verify_api_key(api_key):
 
 def process_replicate(node, input_data, **kwargs):
     try:
-        if not st.session_state.replicate_api_key:
+        if not st.session_state.get('replicate_api_key'):
             logger.error("API key is missing")
             st.error("API key is missing. Please enter your Replicate API key in the sidebar.")
             return None
@@ -66,7 +66,7 @@ def process_replicate(node, input_data, **kwargs):
         
         logger.info(f"Model input: {model_input}")
         
-        client = replicate.Client(api_token=st.session_state.replicate_api_key)
+        client = replicate.Client(api_token=st.session_state['replicate_api_key'])
         output = client.run(node.model_id, input=model_input)
         
         logger.info(f"Raw output: {output}")
@@ -170,7 +170,7 @@ def main():
     replicate_api_key = st.sidebar.text_input("Replicate API Key", type="password", value=st.session_state.replicate_api_key)
 
     # Verify and save Replicate API key
-    if replicate_api_key:
+    if replicate_api_key and replicate_api_key != st.session_state.replicate_api_key:
         st.session_state.replicate_api_key = replicate_api_key
         if verify_api_key(replicate_api_key):
             st.sidebar.success("Replicate API key verified successfully!")
@@ -195,7 +195,6 @@ def main():
         for node in available_nodes:
             if st.button(node.name, key=f"add_{node.id}"):
                 create_node(node.id, 0, 0)
-                st.experimental_rerun()
 
     with col2:
         st.subheader("Interactive Workflow Visualizer")
@@ -334,20 +333,15 @@ def main():
             if return_value['type'] == 'add_node':
                 node_type = st.selectbox("Select node type", [n.id for n in available_nodes])
                 create_node(node_type, return_value['x'], return_value['y'])
-                st.experimental_rerun()
             elif return_value['type'] == 'move_node':
                 update_node_position(return_value['id'], return_value['x'], return_value['y'])
-                st.experimental_rerun()
             elif return_value['type'] == 'select_node':
                 st.session_state.selected_node = return_value['id']
-                st.experimental_rerun()
             elif return_value['type'] == 'add_edge':
                 edge_type = st.selectbox("Select edge type", ["data", "control"])
                 create_edge(return_value['source'], return_value['target'], edge_type)
-                st.experimental_rerun()
             elif return_value['type'] == 'remove_edge':
                 remove_edge(return_value['source'], return_value['target'])
-                st.experimental_rerun()
 
     with col3:
         st.subheader("Node Properties")
@@ -379,12 +373,10 @@ def main():
             
             if st.button("Update Properties"):
                 update_node_properties(st.session_state.selected_node, new_properties)
-                st.experimental_rerun()
             
             if st.button("Remove Node"):
                 remove_node(st.session_state.selected_node)
                 st.session_state.selected_node = None
-                st.experimental_rerun()
 
     st.subheader("Pipeline Execution")
     if st.session_state.workflow.nodes:
