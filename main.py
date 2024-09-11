@@ -5,23 +5,26 @@ from PIL import Image
 import io
 import networkx as nx
 from streamlit_agraph import agraph, Node, Edge, Config
+import streamlit.components.v1 as components
 import logging
 import zipfile
 import os
 import base64
 import time
+import json
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class AINode:
-    def __init__(self, id, name, model_id, input_type, output_type):
+    def __init__(self, id, name, model_id, input_type, output_type, params=None):
         self.id = id
         self.name = name
         self.model_id = model_id
         self.input_type = input_type
         self.output_type = output_type
+        self.params = params or {}
 
 def verify_api_key(api_key):
     try:
@@ -59,6 +62,7 @@ def process_replicate(node, input_data, **kwargs):
             raise ValueError(f"Unsupported input type: {node.input_type}")
         
         model_input.update(kwargs)
+        model_input.update(node.params)
         
         logger.info(f"Model input: {model_input}")
         
@@ -110,20 +114,59 @@ def create_download_zip(files):
     os.remove(zip_filename)
     return href
 
+def create_node(node_type, x, y):
+    node_id = f"{node_type}_{len(st.session_state.workflow.nodes)}"
+    node = next((AINode(n.id, n.name, n.model_id, n.input_type, n.output_type, n.params) 
+                 for n in available_nodes if n.id == node_type), None)
+    if node:
+        st.session_state.workflow.add_node(node_id, node=node)
+        st.session_state.node_positions[node_id] = (x, y)
+        return node_id
+    return None
+
+def update_node_position(node_id, x, y):
+    st.session_state.node_positions[node_id] = (x, y)
+
+def create_edge(source_id, target_id, edge_type):
+    if not st.session_state.workflow.has_edge(source_id, target_id):
+        st.session_state.workflow.add_edge(source_id, target_id, type=edge_type)
+
+def remove_node(node_id):
+    st.session_state.workflow.remove_node(node_id)
+    del st.session_state.node_positions[node_id]
+
+def remove_edge(source_id, target_id):
+    st.session_state.workflow.remove_edge(source_id, target_id)
+
+def update_node_properties(node_id, properties):
+    node = st.session_state.workflow.nodes[node_id]['node']
+    for key, value in properties.items():
+        if key in node.params:
+            node.params[key] = value
+        else:
+            setattr(node, key, value)
+
 def main():
-    st.set_page_config(page_title="Replicate AI Pipeline Builder", layout="wide")
+    st.set_page_config(page_title="Advanced Interactive AI Pipeline Builder", layout="wide")
     
-    st.title("Replicate AI Pipeline Builder")
+    st.title("Advanced Interactive AI Pipeline Builder")
     st.sidebar.header("Settings")
 
-    # Initialize session state for API keys
+    # Initialize session state
     if 'replicate_api_key' not in st.session_state:
         st.session_state.replicate_api_key = ""
-    
     if 'generated_files' not in st.session_state:
         st.session_state.generated_files = []
-    
-    # API key inputs
+    if 'workflow' not in st.session_state:
+        st.session_state.workflow = nx.DiGraph()
+    if 'node_positions' not in st.session_state:
+        st.session_state.node_positions = {}
+    if 'selected_node' not in st.session_state:
+        st.session_state.selected_node = None
+    if 'edge_creation_mode' not in st.session_state:
+        st.session_state.edge_creation_mode = False
+
+    # API key input
     replicate_api_key = st.sidebar.text_input("Replicate API Key", type="password", value=st.session_state.replicate_api_key)
 
     # Verify and save Replicate API key
@@ -134,102 +177,252 @@ def main():
         else:
             st.sidebar.error("Invalid Replicate API key. Please check and try again.")
 
+    global available_nodes
     available_nodes = [
-        AINode("flux", "Flux Schnell", "black-forest-labs/flux-schnell", "text", "image"),
-        AINode("sdxl", "Stable Diffusion XL", "stability-ai/sdxl:a00d0b7dcbb9c3fbb34ba87d2d5b46c56969c84a628bf778a7fdaec30b1b99c5", "text", "image"),
-        AINode("video", "Stable Diffusion Image-to-Video", "stable-diffusion-image-to-video", "image", "video"),
-        AINode("upscale", "Image Upscaling", "nightmareai/real-esrgan:42fed1c4974146d4d2414e2be2c5277c7fcf05fcc3a73abf41610695738c1d7b", "image", "image"),
-        AINode("remove-bg", "Remove Background", "cjwbw/rembg:fb8af171cfa1616ddcf1242c093f9c46bcada5ad4cf6f2fbe8b81b330ec5c003", "image", "image"),
-        AINode("music-gen", "MusicGen", "meta/musicgen:7a76a8258b23fae65c5a22debb8841d1d7e816b75c2f24218cd2bd8573787906", "text", "audio"),
+        AINode("text_input", "Text Input", None, None, "text", {"text": ""}),
+        AINode("image_input", "Image Input", None, None, "image", {"image": None}),
+        AINode("text_to_image", "Text to Image", "stability-ai/sdxl:a00d0b7dcbb9c3fbb34ba87d2d5b46c56969c84a628bf778a7fdaec30b1b99c5", "text", "image", {"prompt": "", "negative_prompt": ""}),
+        AINode("image_to_image", "Image to Image", "stability-ai/sdxl:a00d0b7dcbb9c3fbb34ba87d2d5b46c56969c84a628bf778a7fdaec30b1b99c5", "image", "image", {"prompt": "", "strength": 0.75}),
+        AINode("upscale", "Upscale", "nightmareai/real-esrgan:42fed1c4974146d4d2414e2be2c5277c7fcf05fcc3a73abf41610695738c1d7b", "image", "image", {"scale": 2}),
+        AINode("remove_bg", "Remove Background", "cjwbw/rembg:fb8af171cfa1616ddcf1242c093f9c46bcada5ad4cf6f2fbe8b81b330ec5c003", "image", "image", {}),
+        AINode("music_gen", "Music Generation", "meta/musicgen:7a76a8258b23fae65c5a22debb8841d1d7e816b75c2f24218cd2bd8573787906", "text", "audio", {"prompt": ""}),
     ]
 
-    if 'workflow' not in st.session_state:
-        st.session_state.workflow = nx.DiGraph()
-    if 'node_positions' not in st.session_state:
-        st.session_state.node_positions = {}
-
-    col1, col2 = st.columns([2, 3])
+    col1, col2, col3 = st.columns([1, 3, 1])
 
     with col1:
-        st.subheader("Pipeline Builder")
-        
-        with st.expander("Add Node", expanded=True):
-            selected_node = st.selectbox("Select a node to add", available_nodes, format_func=lambda x: x.name)
-            if st.button("Add Node", key="add_node"):
-                if selected_node.id not in st.session_state.workflow.nodes:
-                    st.session_state.workflow.add_node(selected_node.id, node=selected_node)
-                    st.session_state.node_positions[selected_node.id] = (len(st.session_state.workflow.nodes) * 100, 0)
-                    st.success(f"Added {selected_node.name} to the workflow.")
-                else:
-                    st.warning(f"{selected_node.name} is already in the workflow.")
-
-        if len(st.session_state.workflow.nodes) > 1:
-            with st.expander("Connect Nodes", expanded=True):
-                source = st.selectbox("From", list(st.session_state.workflow.nodes), format_func=lambda x: st.session_state.workflow.nodes[x]['node'].name)
-                target = st.selectbox("To", [n for n in st.session_state.workflow.nodes if n != source], format_func=lambda x: st.session_state.workflow.nodes[x]['node'].name)
-                if st.button("Connect Nodes", key="connect_nodes"):
-                    if not st.session_state.workflow.has_edge(source, target):
-                        st.session_state.workflow.add_edge(source, target)
-                        st.success(f"Connected {st.session_state.workflow.nodes[source]['node'].name} to {st.session_state.workflow.nodes[target]['node'].name}.")
-                    else:
-                        st.warning("These nodes are already connected.")
-
-        with st.expander("Remove Node or Connection", expanded=True):
-            remove_type = st.radio("Select what to remove:", ["Node", "Connection"])
-            if remove_type == "Node":
-                node_to_remove = st.selectbox("Select node to remove", list(st.session_state.workflow.nodes), format_func=lambda x: st.session_state.workflow.nodes[x]['node'].name)
-                if st.button("Remove Node", key="remove_node"):
-                    st.session_state.workflow.remove_node(node_to_remove)
-                    del st.session_state.node_positions[node_to_remove]
-                    st.success(f"Removed {node_to_remove} from the workflow.")
-            else:
-                edges = list(st.session_state.workflow.edges)
-                if edges:
-                    edge_to_remove = st.selectbox("Select connection to remove", edges, format_func=lambda x: f"{st.session_state.workflow.nodes[x[0]]['node'].name} -> {st.session_state.workflow.nodes[x[1]]['node'].name}")
-                    if st.button("Remove Connection", key="remove_edge"):
-                        st.session_state.workflow.remove_edge(*edge_to_remove)
-                        st.success(f"Removed connection between {st.session_state.workflow.nodes[edge_to_remove[0]]['node'].name} and {st.session_state.workflow.nodes[edge_to_remove[1]]['node'].name}.")
-                else:
-                    st.write("No connections to remove.")
-
-        # Add "Remove All Nodes" button
-        if st.button("Remove All Nodes", key="remove_all_nodes"):
-            st.session_state.workflow.clear()
-            st.session_state.node_positions.clear()
-            st.success("All nodes and connections have been removed.")
+        st.subheader("Available Nodes")
+        for node in available_nodes:
+            if st.button(node.name, key=f"add_{node.id}"):
+                create_node(node.id, 0, 0)
+                st.experimental_rerun()
 
     with col2:
-        st.subheader("Workflow Visualization")
-        nodes = [Node(id=n, label=data['node'].name, x=st.session_state.node_positions[n][0], y=st.session_state.node_positions[n][1]) 
+        st.subheader("Interactive Workflow Visualizer")
+        
+        nodes = [Node(id=n, label=data['node'].name, 
+                      x=st.session_state.node_positions[n][0], 
+                      y=st.session_state.node_positions[n][1],
+                      color="#00BFFF" if n == st.session_state.selected_node else "#FFFFFF") 
                  for n, data in st.session_state.workflow.nodes(data=True)]
-        edges = [Edge(source=u, target=v) for u, v in st.session_state.workflow.edges()]
-        config = Config(width=600, height=400, directed=True, physics=True, hierarchical=False)
-        agraph(nodes=nodes, edges=edges, config=config)
+        edges = [Edge(source=u, target=v, type=data['type']) 
+                 for u, v, data in st.session_state.workflow.edges(data=True)]
+        
+        config = Config(width=800, 
+                        height=600, 
+                        directed=True, 
+                        physics=False, 
+                        hierarchical=False)
+        
+        return_value = agraph(nodes=nodes, 
+                              edges=edges, 
+                              config=config)
+
+        # Custom JavaScript for enhanced interactivity
+        components.html(
+            """
+            <script>
+            const graph = document.querySelector('.react-flow__renderer');
+            if (graph) {
+                // Double-click to add node
+                graph.addEventListener('dblclick', (event) => {
+                    const rect = graph.getBoundingClientRect();
+                    const x = event.clientX - rect.left;
+                    const y = event.clientY - rect.top;
+                    Streamlit.setComponentValue({type: 'add_node', x: x, y: y});
+                });
+
+                // Drag to move nodes
+                const nodes = graph.querySelectorAll('.react-flow__node');
+                nodes.forEach(node => {
+                    node.addEventListener('mousedown', (event) => {
+                        const startX = event.clientX;
+                        const startY = event.clientY;
+                        const nodeId = node.getAttribute('data-id');
+                        
+                        const mousemove = (moveEvent) => {
+                            const dx = moveEvent.clientX - startX;
+                            const dy = moveEvent.clientY - startY;
+                            node.style.transform = `translate(${dx}px, ${dy}px)`;
+                        };
+                        
+                        const mouseup = () => {
+                            document.removeEventListener('mousemove', mousemove);
+                            document.removeEventListener('mouseup', mouseup);
+                            const rect = node.getBoundingClientRect();
+                            const x = rect.left - graph.getBoundingClientRect().left;
+                            const y = rect.top - graph.getBoundingClientRect().top;
+                            Streamlit.setComponentValue({type: 'move_node', id: nodeId, x: x, y: y});
+                        };
+                        
+                        document.addEventListener('mousemove', mousemove);
+                        document.addEventListener('mouseup', mouseup);
+                    });
+
+                    // Click to select node
+                    node.addEventListener('click', (event) => {
+                        const nodeId = node.getAttribute('data-id');
+                        Streamlit.setComponentValue({type: 'select_node', id: nodeId});
+                    });
+                });
+
+                // Edge creation
+                let edgeStartNode = null;
+                let tempEdge = null;
+                nodes.forEach(node => {
+                    node.addEventListener('mousedown', (event) => {
+                        if (event.button === 2) { // Right mouse button
+                            edgeStartNode = node;
+                            const rect = node.getBoundingClientRect();
+                            const startX = rect.left + rect.width / 2;
+                            const startY = rect.top + rect.height / 2;
+                            
+                            tempEdge = document.createElementNS("http://www.w3.org/2000/svg", "line");
+                            tempEdge.setAttribute("x1", startX);
+                            tempEdge.setAttribute("y1", startY);
+                            tempEdge.setAttribute("x2", startX);
+                            tempEdge.setAttribute("y2", startY);
+                            tempEdge.setAttribute("stroke", "red");
+                            tempEdge.setAttribute("stroke-width", "2");
+                            document.body.appendChild(tempEdge);
+                            
+                            const mousemove = (moveEvent) => {
+                                tempEdge.setAttribute("x2", moveEvent.clientX);
+                                tempEdge.setAttribute("y2", moveEvent.clientY);
+                            };
+                            
+                            const mouseup = (upEvent) => {
+                                document.removeEventListener('mousemove', mousemove);
+                                document.removeEventListener('mouseup', mouseup);
+                                document.body.removeChild(tempEdge);
+                                
+                                const endNode = document.elementFromPoint(upEvent.clientX, upEvent.clientY);
+                                if (endNode && endNode.classList.contains('react-flow__node') && endNode !== edgeStartNode) {
+                                    const startNodeId = edgeStartNode.getAttribute('data-id');
+                                    const endNodeId = endNode.getAttribute('data-id');
+                                    Streamlit.setComponentValue({type: 'add_edge', source: startNodeId, target: endNodeId});
+                                }
+                                
+                                edgeStartNode = null;
+                                tempEdge = null;
+                            };
+                            
+                            document.addEventListener('mousemove', mousemove);
+                            document.addEventListener('mouseup', mouseup);
+                        }
+                    });
+                });
+
+                // Right-click context menu for edges
+                const edges = graph.querySelectorAll('.react-flow__edge');
+                edges.forEach(edge => {
+                    edge.addEventListener('contextmenu', (event) => {
+                        event.preventDefault();
+                        const sourceId = edge.getAttribute('data-source');
+                        const targetId = edge.getAttribute('data-target');
+                        Streamlit.setComponentValue({type: 'remove_edge', source: sourceId, target: targetId});
+                    });
+                });
+            }
+            </script>
+            """,
+            height=0,
+        )
+
+        # Handle return values from custom JavaScript
+        if return_value:
+            if return_value['type'] == 'add_node':
+                node_type = st.selectbox("Select node type", [n.id for n in available_nodes])
+                create_node(node_type, return_value['x'], return_value['y'])
+                st.experimental_rerun()
+            elif return_value['type'] == 'move_node':
+                update_node_position(return_value['id'], return_value['x'], return_value['y'])
+                st.experimental_rerun()
+            elif return_value['type'] == 'select_node':
+                st.session_state.selected_node = return_value['id']
+                st.experimental_rerun()
+            elif return_value['type'] == 'add_edge':
+                edge_type = st.selectbox("Select edge type", ["data", "control"])
+                create_edge(return_value['source'], return_value['target'], edge_type)
+                st.experimental_rerun()
+            elif return_value['type'] == 'remove_edge':
+                remove_edge(return_value['source'], return_value['target'])
+                st.experimental_rerun()
+
+    with col3:
+        st.subheader("Node Properties")
+        if st.session_state.selected_node:
+            node = st.session_state.workflow.nodes[st.session_state.selected_node]['node']
+            st.write(f"Editing: {node.name}")
+            
+            # Display and edit node properties
+            new_properties = {}
+            for attr in ['input_type', 'output_type', 'model_id']:
+                new_value = st.text_input(attr, getattr(node, attr))
+                new_properties[attr] = new_value
+            
+            # Display and edit node-specific parameters
+            for param, value in node.params.items():
+                if isinstance(value, str):
+                    new_value = st.text_input(param, value)
+                elif isinstance(value, (int, float)):
+                    new_value = st.number_input(param, value=value)
+                elif isinstance(value, bool):
+                    new_value = st.checkbox(param, value)
+                elif isinstance(value, Image.Image):
+                    new_value = st.file_uploader(f"Upload {param}", type=["png", "jpg", "jpeg"])
+                    if new_value:
+                        new_value = Image.open(new_value)
+                else:
+                    new_value = st.text_input(param, str(value))
+                new_properties[param] = new_value
+            
+            if st.button("Update Properties"):
+                update_node_properties(st.session_state.selected_node, new_properties)
+                st.experimental_rerun()
+            
+            if st.button("Remove Node"):
+                remove_node(st.session_state.selected_node)
+                st.session_state.selected_node = None
+                st.experimental_rerun()
 
     st.subheader("Pipeline Execution")
     if st.session_state.workflow.nodes:
         start_nodes = [n for n, d in st.session_state.workflow.in_degree() if d == 0]
         if start_nodes:
-            start_node = start_nodes[0]
-            input_type = st.session_state.workflow.nodes[start_node]['node'].input_type
-            if input_type == "text":
-                user_input = st.text_area("Enter your prompt:")
-            elif input_type == "image":
-                user_input = st.file_uploader("Upload an image:", type=["png", "jpg", "jpeg"])
-                if user_input:
-                    user_input = Image.open(user_input)
-
             if st.button("Run Pipeline", key="run_pipeline"):
-                if user_input and st.session_state.replicate_api_key:
+                if st.session_state.replicate_api_key:
                     with st.spinner("Processing..."):
-                        current_output = user_input
                         st.session_state.generated_files = []
                         for node_id in nx.topological_sort(st.session_state.workflow):
                             node = st.session_state.workflow.nodes[node_id]['node']
                             
                             with st.expander(f"Processing: {node.name}", expanded=True):
                                 st.info(f"Processing node: {node.name}")
-                                current_output = process_replicate(node, current_output)
+                                
+                                # Handle input nodes
+                                if node.input_type is None:
+                                    if node.output_type == "text":
+                                        current_output = st.text_area(f"Enter text for {node.name}", node.params.get("text", ""))
+                                    elif node.output_type == "image":
+                                        uploaded_file = st.file_uploader(f"Upload image for {node.name}", type=["png", "jpg", "jpeg"])
+                                        if uploaded_file:
+                                            current_output = Image.open(uploaded_file)
+                                        else:
+                                            st.warning(f"Please upload an image for {node.name}")
+                                            break
+                                else:
+                                    # Get input from previous nodes
+                                    prev_nodes = list(st.session_state.workflow.predecessors(node_id))
+                                    if prev_nodes:
+                                        current_output = st.session_state.generated_files[-1]  # Get output from the last processed node
+                                    else:
+                                        st.warning(f"No input available for {node.name}")
+                                        break
+                                
+                                # Process the node
+                                if node.model_id:  # Only process if it's not an input node
+                                    current_output = process_replicate(node, current_output)
                                 
                                 if current_output is None:
                                     st.error(f"Processing failed at node: {node.name}")
@@ -253,10 +446,8 @@ def main():
                         st.success("Pipeline execution completed!")
                 elif not st.session_state.replicate_api_key:
                     st.warning("Please enter your API key in the sidebar.")
-                else:
-                    st.warning("Please provide input.")
         else:
-            st.warning("Your workflow has no starting point. Please connect your nodes.")
+            st.warning("Your workflow has no starting point. Please add input nodes to the workflow.")
     else:
         st.warning("Please add at least one node to the workflow.")
 
