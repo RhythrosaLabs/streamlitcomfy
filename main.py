@@ -32,67 +32,6 @@ def verify_api_key(api_key):
         logger.error(f"API key verification failed: {str(e)}")
         return False
 
-def verify_sd_api_key(sd_api_key):
-    try:
-        response = requests.get("https://api.stability.ai/v2beta/status", headers={"Authorization": f"Bearer {sd_api_key}"})
-        return response.status_code == 200
-    except Exception as e:
-        logger.error(f"Stable Diffusion API key verification failed: {str(e)}")
-        return False
-
-def process_sd_image_to_video(api_key, image, prompt=None, cfg_scale=1.8, motion_bucket_id=127, seed=0):
-    try:
-        url = "https://api.stability.ai/v2beta/image-to-video"
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "stability-client-id": "streamlit-ai-pipeline-builder"  # You can customize this
-        }
-        
-        # Convert PIL Image to bytes
-        img_byte_arr = io.BytesIO()
-        image.save(img_byte_arr, format='PNG')
-        img_byte_arr = img_byte_arr.getvalue()
-        
-        files = {
-            "image": ("image.png", img_byte_arr, "image/png")
-        }
-        
-        data = {
-            "cfg_scale": cfg_scale,
-            "motion_bucket_id": motion_bucket_id,
-            "seed": seed
-        }
-        
-        if prompt:
-            data["text_prompts"] = [{"text": prompt}]
-        
-        response = requests.post(url, headers=headers, files=files, data=data)
-        response.raise_for_status()
-        
-        generation_id = response.json().get("id")
-        if not generation_id:
-            raise ValueError("No generation ID received from the API")
-        
-        # Poll for results
-        result_url = f"https://api.stability.ai/v2beta/image-to-video/result/{generation_id}"
-        while True:
-            time.sleep(10)  # Wait for 10 seconds before polling
-            result_response = requests.get(result_url, headers=headers)
-            result_response.raise_for_status()
-            result_data = result_response.json()
-            
-            if result_data.get("status") == "succeeded":
-                return result_data.get("video_url")
-            elif result_data.get("status") == "failed":
-                raise Exception("Video generation failed: " + result_data.get("error", "Unknown error"))
-    
-    except requests.exceptions.RequestException as e:
-        st.error(f"Stable Diffusion API Error: {str(e)}")
-        return None
-    except Exception as e:
-        st.error(f"An unexpected error occurred: {str(e)}")
-        return None
-
 def process_replicate(node, input_data, **kwargs):
     try:
         if not st.session_state.replicate_api_key:
@@ -181,15 +120,11 @@ def main():
     if 'replicate_api_key' not in st.session_state:
         st.session_state.replicate_api_key = ""
     
-    if 'stability_api_key' not in st.session_state:
-        st.session_state.stability_api_key = ""
-    
     if 'generated_files' not in st.session_state:
         st.session_state.generated_files = []
     
     # API key inputs
     replicate_api_key = st.sidebar.text_input("Replicate API Key", type="password", value=st.session_state.replicate_api_key)
-    stability_api_key = st.sidebar.text_input("Stable Diffusion API Key", type="password", value=st.session_state.stability_api_key)
 
     # Verify and save Replicate API key
     if replicate_api_key:
@@ -199,24 +134,12 @@ def main():
         else:
             st.sidebar.error("Invalid Replicate API key. Please check and try again.")
 
-    # Verify and save Stability AI API key
-    if stability_api_key:
-        st.session_state.stability_api_key = stability_api_key
-        if verify_sd_api_key(stability_api_key):
-            st.sidebar.success("Stability AI API key verified successfully!")
-        else:
-            st.sidebar.error("Invalid Stability AI API key. Please check and try again.")
-
     available_nodes = [
         AINode("flux", "Flux Schnell", "black-forest-labs/flux-schnell", "text", "image"),
         AINode("sdxl", "Stable Diffusion XL", "stability-ai/sdxl:a00d0b7dcbb9c3fbb34ba87d2d5b46c56969c84a628bf778a7fdaec30b1b99c5", "text", "image"),
         AINode("video", "Stable Diffusion Image-to-Video", "stable-diffusion-image-to-video", "image", "video"),
         AINode("upscale", "Image Upscaling", "nightmareai/real-esrgan:42fed1c4974146d4d2414e2be2c5277c7fcf05fcc3a73abf41610695738c1d7b", "image", "image"),
-        AINode("clip", "CLIP Image Interrogator", "andreasjansson/clip-interrogator:a4a8bafd6089e1716b06057c42b19378250d008b80fe87caa5cd36d40c1eda90", "image", "text"),
-        AINode("controlnet", "ControlNet", "jagilley/controlnet-canny:aff48af9c68d162388d230a2ab003f68d2638d88307bdaf1c2f1ac95079c9613", "image", "image"),
-        AINode("instruct-pix2pix", "InstructPix2Pix", "timothybrooks/instruct-pix2pix:30c1d0b916a6f8efce20493f5d61ee27491ab2a60437c13c588468b9810ec23f", "image", "image"),
         AINode("remove-bg", "Remove Background", "cjwbw/rembg:fb8af171cfa1616ddcf1242c093f9c46bcada5ad4cf6f2fbe8b81b330ec5c003", "image", "image"),
-        AINode("llama", "LLaMA 13B", "replicate/llama-2-13b-chat:f4e2de70d66816a838a89eeeb621910adffb0dd0baba3976c96980970978018d", "text", "text"),
         AINode("music-gen", "MusicGen", "meta/musicgen:7a76a8258b23fae65c5a22debb8841d1d7e816b75c2f24218cd2bd8573787906", "text", "audio"),
     ]
 
@@ -297,7 +220,7 @@ def main():
                     user_input = Image.open(user_input)
 
             if st.button("Run Pipeline", key="run_pipeline"):
-                if user_input and (st.session_state.replicate_api_key or st.session_state.stability_api_key):
+                if user_input and st.session_state.replicate_api_key:
                     with st.spinner("Processing..."):
                         current_output = user_input
                         st.session_state.generated_files = []
@@ -306,23 +229,7 @@ def main():
                             
                             with st.expander(f"Processing: {node.name}", expanded=True):
                                 st.info(f"Processing node: {node.name}")
-                                if node.model_id == "stable-diffusion-image-to-video":
-                                    # Use Stable Diffusion Image to Video API
-                                    cfg_scale = st.slider("CFG Scale", 0.0, 10.0, 1.8, 0.1)
-                                    motion_bucket_id = st.slider("Motion Bucket ID", 1, 255, 127)
-                                    seed = st.number_input("Seed", 0, 4294967294, 0)
-                                    prompt = st.text_input("Optional Prompt")
-                                    
-                                    current_output = process_sd_image_to_video(
-                                        st.session_state.stability_api_key,
-                                        current_output,
-                                        prompt=prompt if prompt else None,
-                                        cfg_scale=cfg_scale,
-                                        motion_bucket_id=motion_bucket_id,
-                                        seed=seed
-                                    )
-                                else:
-                                    current_output = process_replicate(node, current_output)
+                                current_output = process_replicate(node, current_output)
                                 
                                 if current_output is None:
                                     st.error(f"Processing failed at node: {node.name}")
@@ -344,8 +251,8 @@ def main():
                                 st.session_state.generated_files.append(current_output)
                         
                         st.success("Pipeline execution completed!")
-                elif not (st.session_state.replicate_api_key or st.session_state.stability_api_key):
-                    st.warning("Please enter your API keys in the sidebar.")
+                elif not st.session_state.replicate_api_key:
+                    st.warning("Please enter your API key in the sidebar.")
                 else:
                     st.warning("Please provide input.")
         else:
