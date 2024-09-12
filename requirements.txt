@@ -1,7 +1,5 @@
 streamlit
-replicate
 requests
-Pillow
-networkx
-streamlit-agraph
-streamlit-options-menu
+pillow
+replicate
+aiohttp
